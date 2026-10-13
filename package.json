@@ -32,13 +32,13 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file-if-exists=.env.local node_modules/tsx/dist/cli.mjs watch src/server.ts",
     "cli": "tsx src/cli.ts",
     "mcp": "tsx src/scriverse-mcp-server.ts",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/copy-public.mjs",
     "prepack": "npm run build",
-    "start": "node dist/server.js",
+    "start": "node --env-file-if-exists=.env.local dist/server.js",
     "start:mcp": "node dist/scriverse-mcp-server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
