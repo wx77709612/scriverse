@@ -64,6 +64,58 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1?directory=volumes") {
+        response.end(JSON.stringify({
+          data: {
+            id: "work-1",
+            title: "星海余烬",
+            author: "林川",
+            description: "失落舰队寻找归途。",
+            versionNo: 7,
+            volumes: [{
+              id: "volume-1",
+              workId: "work-1",
+              title: "第一卷",
+              chapterCount: 51,
+              chapters: []
+            }]
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/volumes/volume-1/chapters?page=2&limit=25") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "chapter-26",
+              workId: "work-1",
+              volumeId: "volume-1",
+              title: "第二十六章 归航",
+              wordCount: 3200,
+              versionNo: 3
+            }],
+            page: 2,
+            limit: 25,
+            hasMore: true,
+            nextPage: 3
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/chapters/chapter-26") {
+        response.end(JSON.stringify({
+          data: {
+            id: "chapter-26",
+            workId: "work-1",
+            volumeId: "volume-1",
+            title: "第二十六章 归航",
+            content: "舰桥前方终于出现了熟悉的恒星。",
+            wordCount: 16,
+            versionNo: 3
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/drafts?includeContent=false") {
         response.end(JSON.stringify({ data: [{ id: "draft-1", title: "雨夜开场" }] }));
         return;
@@ -110,6 +162,9 @@ describe("Scriverse MCP Bridge", () => {
     expect(result.tools.map((tool) => tool.name)).toEqual([
       "list_works",
       "get_work_directory",
+      "get_work",
+      "list_chapters",
+      "get_chapter",
       "list_drafts",
       "create_draft"
     ]);
@@ -135,6 +190,86 @@ describe("Scriverse MCP Bridge", () => {
       idempotentHint: false,
       openWorldHint: false
     });
+  });
+
+  it("读取作品详情并只返回分卷级章节统计", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const result = await client.callTool({
+      name: "get_work",
+      arguments: { workTitle: "星海余烬" }
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({
+      work: {
+        id: "work-1",
+        title: "星海余烬",
+        author: "林川",
+        description: "失落舰队寻找归途。",
+        versionNo: 7,
+        volumes: [{
+          id: "volume-1",
+          workId: "work-1",
+          title: "第一卷",
+          chapterCount: 51,
+          chapters: []
+        }]
+      }
+    });
+    expect(fixture.requests).toEqual([
+      { method: "GET", url: "/api/works", authorization: "Bearer scrv_test-secret", body: null },
+      { method: "GET", url: "/api/works/work-1?directory=volumes", authorization: "Bearer scrv_test-secret", body: null }
+    ]);
+  });
+
+  it("按分卷分页读取章节摘要后再按 ID 读取完整章节", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const chapters = await client.callTool({
+      name: "list_chapters",
+      arguments: { volumeId: "volume-1", page: 2, limit: 25 }
+    });
+    const chapter = await client.callTool({
+      name: "get_chapter",
+      arguments: { chapterId: "chapter-26" }
+    });
+
+    expect(chapters.isError).not.toBe(true);
+    expect(chapters.structuredContent).toEqual({
+      chapters: {
+        items: [{
+          id: "chapter-26",
+          workId: "work-1",
+          volumeId: "volume-1",
+          title: "第二十六章 归航",
+          wordCount: 3200,
+          versionNo: 3
+        }],
+        page: 2,
+        limit: 25,
+        hasMore: true,
+        nextPage: 3
+      }
+    });
+    expect(JSON.stringify(chapters.structuredContent)).not.toContain("content");
+    expect(chapter.structuredContent).toEqual({
+      chapter: {
+        id: "chapter-26",
+        workId: "work-1",
+        volumeId: "volume-1",
+        title: "第二十六章 归航",
+        content: "舰桥前方终于出现了熟悉的恒星。",
+        wordCount: 16,
+        versionNo: 3
+      }
+    });
+    expect(fixture.requests).toEqual([
+      { method: "GET", url: "/api/volumes/volume-1/chapters?page=2&limit=25", authorization: "Bearer scrv_test-secret", body: null },
+      { method: "GET", url: "/api/chapters/chapter-26", authorization: "Bearer scrv_test-secret", body: null }
+    ]);
   });
 
   it("按作品名称定位并分页返回不含正文的作品目录", async () => {

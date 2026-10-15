@@ -235,6 +235,87 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "get_work",
+    {
+      title: "获取 Scriverse 作品详情",
+      description: "按作品 ID 或精确作品名称读取作品详情和分卷级章节统计，不返回章节正文。",
+      inputSchema: z.object({
+        workId: identifier.optional().describe("作品 ID；与 workTitle 二选一"),
+        workTitle: z.string().trim().min(1).max(200).optional().describe("作品的精确名称；与 workId 二选一")
+      }).strict().refine(
+        (input) => (input.workId === undefined) !== (input.workTitle === undefined),
+        { message: "workId 与 workTitle 必须且只能提供一个" }
+      ),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, workTitle }) => {
+      try {
+        const resolvedWorkId = await resolveWorkId(fetchImpl, config, { workId, workTitle });
+        const work = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(resolvedWorkId)}`,
+          { query: { directory: "volumes" } }
+        );
+        return result("Scriverse 作品详情：", work, { work });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_chapters",
+    {
+      title: "列出 Scriverse 分卷章节",
+      description: "分页列出指定分卷的章节摘要。结果不包含章节正文，需要正文时请再调用 get_chapter。",
+      inputSchema: z.object({
+        volumeId: identifier.describe("分卷 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的章节摘要数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ volumeId, page, limit }) => {
+      try {
+        const chapters = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/volumes/${encodeURIComponent(volumeId)}/chapters`,
+          { query: { page, limit } }
+        );
+        return result("Scriverse 章节摘要：", chapters, { chapters });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_chapter",
+    {
+      title: "读取 Scriverse 章节",
+      description: "按章节 ID 读取完整章节正文和版本信息。调用前可使用 get_work_directory 或 list_chapters 定位章节。",
+      inputSchema: z.object({
+        chapterId: identifier.describe("章节 ID")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ chapterId }) => {
+      try {
+        const chapter = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/chapters/${encodeURIComponent(chapterId)}`
+        );
+        return result("Scriverse 章节：", chapter, { chapter });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "list_drafts",
     {
       title: "列出 Scriverse 想法",
