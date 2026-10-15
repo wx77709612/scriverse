@@ -194,6 +194,8 @@ async function startScriverseFixture(options: {
               workId: "work-1",
               name: "沈砚",
               role: "领航员",
+              details: { biography: "这段角色完整生平只应通过详情工具读取。" },
+              profileSections: [{ id: "section-hidden", contentMarkdown: "长篇扩展资料" }],
               versionNo: 5
             }],
             page: 1,
@@ -322,7 +324,14 @@ async function startScriverseFixture(options: {
       if (request.method === "GET" && request.url === "/api/works/work-1/timeline-tracks?page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
-            items: [{ id: "track-1", workId: "work-1", name: "舰队纪年", color: "#4f46e5", versionNo: 2 }],
+            items: [{
+              id: "track-1",
+              workId: "work-1",
+              name: "舰队纪年",
+              color: "#4f46e5",
+              description: "这段轨道长描述只应通过详情工具读取。",
+              versionNo: 2
+            }],
             page: 1,
             limit: 20,
             hasMore: false,
@@ -340,7 +349,16 @@ async function startScriverseFixture(options: {
       if (request.method === "GET" && request.url === "/api/works/work-1/timeline?page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
-            items: [{ id: "event-1", workId: "work-1", trackId: "track-1", name: "灰烬跃迁", timeLabel: "新历 17 年", versionNo: 4 }],
+            items: [{
+              id: "event-1",
+              workId: "work-1",
+              trackId: "track-1",
+              name: "灰烬跃迁",
+              timeLabel: "新历 17 年",
+              description: "这段事件长描述只应通过详情工具读取。",
+              evidence: ["完整证据一", "完整证据二"],
+              versionNo: 4
+            }],
             page: 1,
             limit: 20,
             hasMore: false,
@@ -375,6 +393,8 @@ async function startScriverseFixture(options: {
               label: "导师",
               category: "alliance",
               confidence: 0.9,
+              description: "这段关系长描述只应通过详情工具读取。",
+              evidence: ["学院档案"],
               versionNo: 3
             }],
             page: 1,
@@ -411,6 +431,8 @@ async function startScriverseFixture(options: {
               volumeId: "volume-1",
               volumeTitle: "第一卷",
               goal: "确认故乡坐标",
+              conflict: "这段完整冲突只应通过详情工具读取。",
+              notes: "这段完整备注只应通过详情工具读取。",
               status: "ready",
               unresolvedForeshadowCount: 2
             }],
@@ -852,6 +874,8 @@ describe("Scriverse MCP Bridge", () => {
         versionNo: 5
       }
     });
+    expect(JSON.stringify(characters.structuredContent)).not.toContain("完整生平");
+    expect(JSON.stringify(characters.structuredContent)).not.toContain("长篇扩展资料");
     expect(sections.structuredContent).toEqual({
       sections: {
         items: [{
@@ -1030,6 +1054,9 @@ describe("Scriverse MCP Bridge", () => {
         versionNo: 4
       }
     });
+    expect(JSON.stringify(tracks.structuredContent)).not.toContain("轨道长描述");
+    expect(JSON.stringify(events.structuredContent)).not.toContain("事件长描述");
+    expect(JSON.stringify(events.structuredContent)).not.toContain("完整证据");
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/timeline-tracks?page=1&limit=20",
       "/api/timeline-tracks/track-1",
@@ -1083,6 +1110,8 @@ describe("Scriverse MCP Bridge", () => {
         versionNo: 3
       }
     });
+    expect(JSON.stringify(relationships.structuredContent)).not.toContain("关系长描述");
+    expect(JSON.stringify(relationships.structuredContent)).not.toContain("学院档案");
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/relationships?minimumConfidence=0&page=1&limit=20",
       "/api/relationships/relationship-1"
@@ -1133,6 +1162,8 @@ describe("Scriverse MCP Bridge", () => {
         versionNo: 2
       }
     });
+    expect(JSON.stringify(outlines.structuredContent)).not.toContain("完整冲突");
+    expect(JSON.stringify(outlines.structuredContent)).not.toContain("完整备注");
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/outlines?page=1&limit=20",
       "/api/chapters/chapter-26/outline"

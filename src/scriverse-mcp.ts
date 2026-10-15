@@ -93,6 +93,23 @@ function result(label: string, value: unknown, structuredContent: Record<string,
   };
 }
 
+function selectSummaryFields(value: unknown, fields: readonly string[]): Record<string, unknown> {
+  if (!value || typeof value !== "object") return {};
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(fields.flatMap((field) => field in record ? [[field, record[field]]] : []));
+}
+
+function summarizeList(value: unknown, fields: readonly string[]): unknown {
+  if (Array.isArray(value)) return value.map((item) => selectSummaryFields(item, fields));
+  if (!value || typeof value !== "object") throw new Error("Scriverse 列表响应格式无效");
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.items)) throw new Error("Scriverse 分页列表响应缺少 items 字段");
+  return {
+    ...record,
+    items: record.items.map((item) => selectSummaryFields(item, fields))
+  };
+}
+
 async function requestScriverse(
   fetchImpl: typeof fetch,
   config: ScriverseMcpConfig,
@@ -433,12 +450,15 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     },
     async ({ workId, page, limit }) => {
       try {
-        const characters = await requestScriverse(
+        const characters = summarizeList(await requestScriverse(
           fetchImpl,
           config,
           `/api/works/${encodeURIComponent(workId)}/characters`,
           { query: { includeSections: false, includeMerged: 0, includeContent: false, page, limit } }
-        );
+        ), [
+          "id", "workId", "name", "gender", "age", "role", "summary", "tags", "raceId",
+          "organizationIds", "versionNo", "isFavorite", "isPinned", "updatedAt"
+        ]);
         return result("Scriverse 角色摘要：", characters, { characters });
       } catch (error) {
         return errorResult(error, config.apiKey);
@@ -637,9 +657,9 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     },
     async ({ workId, page, limit }) => {
       try {
-        const tracks = await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/timeline-tracks`, {
+        const tracks = summarizeList(await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/timeline-tracks`, {
           query: { page, limit }
-        });
+        }), ["id", "workId", "name", "color", "sortOrder", "versionNo", "createdAt", "updatedAt"]);
         return result("Scriverse 时间轴轨道：", tracks, { tracks });
       } catch (error) {
         return errorResult(error, config.apiKey);
@@ -679,9 +699,12 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     },
     async ({ workId, page, limit }) => {
       try {
-        const events = await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/timeline`, {
+        const events = summarizeList(await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/timeline`, {
           query: { page, limit }
-        });
+        }), [
+          "id", "workId", "trackId", "name", "eventType", "timeLabel", "timeSort", "chapterIds",
+          "participantIds", "location", "impactScope", "status", "versionNo", "createdAt", "updatedAt"
+        ]);
         return result("Scriverse 时间轴事件：", events, { events });
       } catch (error) {
         return errorResult(error, config.apiKey);
@@ -722,12 +745,15 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     },
     async ({ workId, minimumConfidence, page, limit }) => {
       try {
-        const relationships = await requestScriverse(
+        const relationships = summarizeList(await requestScriverse(
           fetchImpl,
           config,
           `/api/works/${encodeURIComponent(workId)}/relationships`,
           { query: { minimumConfidence, page, limit } }
-        );
+        ), [
+          "id", "workId", "fromCharacterId", "toCharacterId", "label", "reverseLabel", "category",
+          "direction", "strength", "confidence", "keywords", "confirmationStatus", "versionNo", "createdAt", "updatedAt"
+        ]);
         return result("Scriverse 人物关系摘要：", relationships, { relationships });
       } catch (error) {
         return errorResult(error, config.apiKey);
@@ -771,9 +797,12 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     },
     async ({ workId, page, limit }) => {
       try {
-        const outlines = await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/outlines`, {
+        const outlines = summarizeList(await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/outlines`, {
           query: { page, limit }
-        });
+        }), [
+          "chapterId", "chapterTitle", "volumeId", "volumeTitle", "goal", "status",
+          "unresolvedForeshadowCount", "createdAt", "updatedAt"
+        ]);
         return result("Scriverse 章节大纲摘要：", outlines, { outlines });
       } catch (error) {
         return errorResult(error, config.apiKey);
