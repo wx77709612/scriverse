@@ -1205,5 +1205,44 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_organization",
+    {
+      title: "创建 Scriverse 正式组织",
+      description: "把组织写入作品的正式组织模块。重名时返回已有候选，不会覆盖或合并记录。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        name: z.string().trim().min(1).max(200).describe("组织名称"),
+        isDissolved: z.boolean().optional().describe("组织是否已经解散"),
+        description: z.string().max(100_000).optional().describe("组织描述"),
+        settingsMarkdown: z.string().max(200_000).optional().describe("组织资料，支持 Markdown"),
+        memberIds: z.array(identifier).max(1000).optional().describe("同一作品内的角色成员 ID"),
+        idempotencyKey
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const organization = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/organizations`,
+          { method: "POST", body, idempotencyKey }
+        );
+        const creation = creationSummary(organization, {
+          workId,
+          entityType: "organization",
+          module: "organizations",
+          name: input.name,
+          relatedEntityIds: { memberIds: input.memberIds }
+        });
+        return result("已创建 Scriverse 正式组织：", creation, { organization, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

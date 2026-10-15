@@ -570,6 +570,11 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "race-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/organizations") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "organization-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -656,7 +661,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_setting",
       "create_character",
       "create_character_section",
-      "create_race"
+      "create_race",
+      "create_organization"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -679,6 +685,16 @@ describe("Scriverse MCP Bridge", () => {
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false
+    });
+    expect(result.tools.find((tool) => tool.name === "create_organization")?.inputSchema).toMatchObject({
+      additionalProperties: false,
+      required: ["workId", "name", "idempotencyKey"],
+      properties: {
+        workId: { type: "string", maxLength: 200 },
+        name: { type: "string", maxLength: 200 },
+        memberIds: { type: "array", maxItems: 1000 },
+        idempotencyKey: { type: "string", minLength: 16, maxLength: 128 }
+      }
     });
   });
 
@@ -1695,6 +1711,56 @@ describe("Scriverse MCP Bridge", () => {
         name: "星裔",
         module: "races",
         relatedEntityIds: { parentRaceId: "race-1" }
+      }
+    });
+  });
+
+  it("创建正式组织并保留成员关联", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_organization",
+      arguments: {
+        workId: "work-1",
+        name: "归航委员会",
+        description: "负责审核舰队归航路线。",
+        settingsMarkdown: "## 章程\n\n所有路线必须经过双人复核。",
+        memberIds: ["character-1"],
+        idempotencyKey: "organization-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      organization: {
+        id: "organization-2",
+        workId: "work-1",
+        versionNo: 1,
+        name: "归航委员会",
+        description: "负责审核舰队归航路线。",
+        settingsMarkdown: "## 章程\n\n所有路线必须经过双人复核。",
+        memberIds: ["character-1"]
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "organization",
+        entityId: "organization-2",
+        name: "归航委员会",
+        versionNo: 1,
+        module: "organizations",
+        relatedEntityIds: { memberIds: ["character-1"] }
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "POST",
+      url: "/api/works/work-1/organizations",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "organization-create-0001",
+      body: {
+        name: "归航委员会",
+        description: "负责审核舰队归航路线。",
+        settingsMarkdown: "## 章程\n\n所有路线必须经过双人复核。",
+        memberIds: ["character-1"]
       }
     });
   });

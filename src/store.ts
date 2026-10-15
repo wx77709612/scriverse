@@ -6969,6 +6969,22 @@ export class Store {
     return rows.map((row) => this.mapOrganization(row, includeMarkdown, batch));
   }
 
+  findOrganizationDuplicateCandidates(workId: string, name: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    const normalizedName = normalizeCharacterName(name);
+    return this.db.all(
+      "SELECT id, work_id, name FROM organizations WHERE work_id = ? AND normalized_name = ? LIMIT 20",
+      workId,
+      normalizedName
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "organization",
+      name: requiredString(row, "name"),
+      versionNo: this.currentEntityVersionNo("organization", requiredString(row, "id"))
+    }));
+  }
+
   listOrganizationsPage(workId: string, pagination: Pagination, includeMarkdown = true): PaginatedResult<Record<string, unknown>> {
     this.getWork(workId);
     const preferences = this.entityPreferenceProjection("organization", "organization");

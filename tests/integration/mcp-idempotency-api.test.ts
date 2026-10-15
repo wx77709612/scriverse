@@ -331,6 +331,46 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "race.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建正式组织并拒绝重名和跨作品成员", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_organization");
+    const other = await registerFixture(runtime, "idempotent_organization_other");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const otherCharacter = await request(runtime.app).post(`/api/works/${other.workId}/characters`)
+      .set("Authorization", `Bearer ${other.apiKey}`)
+      .set("Idempotency-Key", "mcp-organization-other-character-0001")
+      .send({ name: "他作成员" })
+      .expect(201);
+    const payload = { name: "归航委员会", description: "负责审核舰队归航路线。" };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/organizations`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-organization-create-0001").send(payload).expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/organizations`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-organization-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+    expect(replayed.headers["idempotency-replayed"]).toBe("true");
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/organizations`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-organization-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "organization", name: payload.name, versionNo: 1 })] }
+    });
+
+    await request(runtime.app).post(`/api/works/${fixture.workId}/organizations`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-organization-cross-work-0001")
+      .send({ name: "越界组织", memberIds: [otherCharacter.body.data.id] })
+      .expect(400);
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM organizations WHERE work_id = ?", fixture.workId)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'organization' AND entity_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'organization.created'", created.body.data.id))
+      .toEqual({ action: "organization.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

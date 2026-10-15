@@ -3367,8 +3367,18 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     data(response, mapRecords(organizations, (organization) => redactOrganizationMembers(organization, permissions)));
   });
   app.post("/api/works/:workId/organizations", (request, response) => {
-    const organization = store.createOrganization(request.params.workId, parse(organizationSchema, request.body));
-    data(response, redactOrganizationMembers(organization, requestPermissions(request, request.params.workId)), 201);
+    const input = parse(organizationSchema, request.body);
+    const permissions = requestPermissions(request, request.params.workId);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "organization.create",
+      input,
+      () => redactOrganizationMembers(store.createOrganization(request.params.workId, input), permissions),
+      201,
+      () => store.findOrganizationDuplicateCandidates(request.params.workId, input.name)
+    );
   });
   app.get("/api/organizations/:organizationId", (request, response) => {
     data(response, redactOrganizationMembers(store.getOrganization(request.params.organizationId), requestPermissions(request)));
