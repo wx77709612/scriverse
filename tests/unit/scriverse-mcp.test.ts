@@ -575,6 +575,11 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "organization-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/timeline-tracks") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "track-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -662,7 +667,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_character",
       "create_character_section",
       "create_race",
-      "create_organization"
+      "create_organization",
+      "create_timeline_track"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1761,6 +1767,53 @@ describe("Scriverse MCP Bridge", () => {
         description: "负责审核舰队归航路线。",
         settingsMarkdown: "## 章程\n\n所有路线必须经过双人复核。",
         memberIds: ["character-1"]
+      }
+    });
+  });
+
+  it("创建正式时间轴轨道并返回排序信息", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_timeline_track",
+      arguments: {
+        workId: "work-1",
+        name: "归航纪年",
+        description: "记录舰队返航过程中的关键节点。",
+        sortOrder: 2,
+        idempotencyKey: "timeline-track-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      timelineTrack: {
+        id: "track-2",
+        workId: "work-1",
+        versionNo: 1,
+        name: "归航纪年",
+        description: "记录舰队返航过程中的关键节点。",
+        sortOrder: 2
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "timeline-track",
+        entityId: "track-2",
+        name: "归航纪年",
+        versionNo: 1,
+        module: "timeline",
+        relatedEntityIds: {}
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "POST",
+      url: "/api/works/work-1/timeline-tracks",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "timeline-track-create-0001",
+      body: {
+        name: "归航纪年",
+        description: "记录舰队返航过程中的关键节点。",
+        sortOrder: 2
       }
     });
   });

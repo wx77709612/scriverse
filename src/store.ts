@@ -8975,6 +8975,21 @@ export class Store {
     return this.db.all("SELECT * FROM timeline_tracks WHERE work_id = ? ORDER BY sort_order, created_at", workId).map((row) => this.mapTimelineTrack(row));
   }
 
+  findTimelineTrackDuplicateCandidates(workId: string, name: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    return this.db.all(
+      "SELECT id, work_id, name FROM timeline_tracks WHERE work_id = ? AND name = ? LIMIT 20",
+      workId,
+      name
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "timeline-track",
+      name: requiredString(row, "name"),
+      versionNo: this.currentEntityVersionNo("timeline-track", requiredString(row, "id"))
+    }));
+  }
+
   listTimelineTracksPage(workId: string, pagination: Pagination): PaginatedResult<Record<string, unknown>> {
     this.getWork(workId);
     const page = paginationSql(pagination);

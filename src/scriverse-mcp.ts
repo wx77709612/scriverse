@@ -1244,5 +1244,41 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_timeline_track",
+    {
+      title: "创建 Scriverse 时间轴轨道",
+      description: "在作品的正式时间轴模块中创建独立轨道。重名时返回已有候选，不会覆盖已有轨道。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        name: z.string().trim().min(1).max(200).describe("轨道名称"),
+        description: z.string().max(20_000).optional().describe("轨道说明"),
+        sortOrder: z.number().int().min(0).max(100_000).optional().describe("排序序号"),
+        idempotencyKey
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const timelineTrack = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/timeline-tracks`,
+          { method: "POST", body, idempotencyKey }
+        );
+        const creation = creationSummary(timelineTrack, {
+          workId,
+          entityType: "timeline-track",
+          module: "timeline",
+          name: input.name
+        });
+        return result("已创建 Scriverse 时间轴轨道：", creation, { timelineTrack, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

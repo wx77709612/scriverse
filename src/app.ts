@@ -3420,8 +3420,17 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     data(response, pagination ? store.listTimelineTracksPage(request.params.workId, pagination) : store.listTimelineTracks(request.params.workId));
   });
   app.post("/api/works/:workId/timeline-tracks", (request, response) => {
-    const track = store.createTimelineTrack(request.params.workId, parse(timelineTrackSchema, request.body));
-    data(response, track, 201);
+    const input = parse(timelineTrackSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "timeline-track.create",
+      input,
+      () => store.createTimelineTrack(request.params.workId, input),
+      201,
+      () => store.findTimelineTrackDuplicateCandidates(request.params.workId, input.name)
+    );
   });
   app.get("/api/timeline-tracks/:trackId", (request, response) => data(response, store.getTimelineTrack(request.params.trackId)));
   app.patch("/api/timeline-tracks/:trackId", (request, response) => {
