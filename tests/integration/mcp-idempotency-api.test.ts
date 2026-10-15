@@ -126,6 +126,14 @@ describe("MCP 写入幂等契约", () => {
       payload.title,
       concurrentPayload.title
     )).toEqual({ count: 2 });
+    expect(runtime.database.get(
+      "SELECT COUNT(*) AS count FROM entity_versions WHERE entity_type = 'draft' AND entity_id = ?",
+      first.body.data.id
+    )).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'draft.created'",
+      first.body.data.id
+    )).toEqual({ action: "draft.created", user_id: fixture.user.userId });
   });
 
   it("拒绝同一作用域内使用相同幂等键提交不同 payload", async () => {
@@ -151,6 +159,40 @@ describe("MCP 写入幂等契约", () => {
       message: "该幂等键已经用于不同的请求内容"
     });
     expect(runtime.database.get("SELECT COUNT(*) AS count FROM drafts WHERE work_id = ?", fixture.workId)).toEqual({ count: 1 });
+  });
+
+  it("带幂等键创建重名想法时返回候选，明确确认后才新增", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_duplicate");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const payload = { draftType: "setting", settingModule: "characters", title: "重名灵感", content: "第一种写法。" };
+    await request(runtime.app).post(`/api/works/${fixture.workId}/drafts`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-draft-duplicate-seed-0001")
+      .send(payload)
+      .expect(201);
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/drafts`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-draft-duplicate-new-0001")
+      .send({ ...payload, content: "第二种写法。" })
+      .expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: {
+        candidates: [expect.objectContaining({ id: expect.any(String), entityType: "draft", title: "重名灵感", versionNo: 1 })]
+      }
+    });
+
+    const confirmed = await request(runtime.app).post(`/api/works/${fixture.workId}/drafts`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-draft-duplicate-new-0001")
+      .set("X-Scriverse-Duplicate-Policy", "create")
+      .send({ ...payload, content: "第二种写法。" })
+      .expect(201);
+    expect(confirmed.body.data.id).not.toBe(duplicate.body.error.details.candidates[0].id);
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM drafts WHERE work_id = ? AND title = ?", fixture.workId, payload.title)).toEqual({ count: 2 });
   });
 
   it("业务操作失败时同时回滚实体和幂等记录", async () => {

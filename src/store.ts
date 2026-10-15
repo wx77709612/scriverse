@@ -6124,6 +6124,33 @@ export class Store {
     ).map((row) => this.mapDraft(row, includeContent));
   }
 
+  findDraftDuplicateCandidates(
+    workId: string,
+    draftType: "prose" | "setting",
+    title: string
+  ): Record<string, unknown>[] {
+    this.getWork(workId);
+    return this.db.all(
+      `SELECT id, work_id, draft_type, volume_id, setting_module, title
+       FROM drafts
+       WHERE work_id = ? AND draft_type = ? AND lower(trim(title)) = lower(trim(?))
+       ORDER BY updated_at DESC, id
+       LIMIT 20`,
+      workId,
+      draftType,
+      title
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "draft",
+      draftType: requiredString(row, "draft_type"),
+      volumeId: optionalString(row, "volume_id"),
+      settingModule: optionalString(row, "setting_module"),
+      title: requiredString(row, "title"),
+      versionNo: this.currentEntityVersionNo("draft", requiredString(row, "id"))
+    }));
+  }
+
   listDraftsPage(
     workId: string,
     pagination: Pagination,

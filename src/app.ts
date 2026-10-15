@@ -1584,7 +1584,8 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     operationName: string,
     input: unknown,
     create: () => T,
-    status = 201
+    status = 201,
+    findDuplicateCandidates?: () => Record<string, unknown>[]
   ): void => {
     const providedKey = request.get("Idempotency-Key");
     if (providedKey === undefined) {
@@ -1592,12 +1593,29 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       return;
     }
     const idempotencyKey = parse(idempotencyKeySchema, providedKey);
+    const duplicatePolicy = parse(
+      z.enum(["reject", "create"]),
+      request.get("X-Scriverse-Duplicate-Policy") ?? "reject"
+    );
     const result = store.executeIdempotentMutation({
       workId,
       operation: operationName,
       idempotencyKey,
-      requestHash: store.hashContent(JSON.stringify(input))
-    }, create);
+      requestHash: store.hashContent(JSON.stringify({ input, duplicatePolicy }))
+    }, () => {
+      if (duplicatePolicy === "reject" && findDuplicateCandidates) {
+        const candidates = findDuplicateCandidates();
+        if (candidates.length > 0) {
+          throw new AppError(
+            409,
+            "DUPLICATE_CANDIDATES",
+            "发现疑似重名的记录，请确认是更新已有记录还是继续新增",
+            { candidates }
+          );
+        }
+      }
+      return create();
+    });
     response.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
     data(response, result.value, status);
   };
@@ -2952,7 +2970,9 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       request.params.workId,
       "draft.create",
       input,
-      () => store.createDraft(request.params.workId, input)
+      () => store.createDraft(request.params.workId, input),
+      201,
+      () => store.findDraftDuplicateCandidates(request.params.workId, input.draftType, input.title)
     );
   });
   app.get("/api/drafts/:draftId", (request, response) => data(response, store.getDraft(request.params.draftId)));

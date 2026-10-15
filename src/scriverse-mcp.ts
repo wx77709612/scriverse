@@ -18,6 +18,7 @@ type ApiEnvelope = {
   error?: {
     code?: unknown;
     message?: unknown;
+    details?: unknown;
   };
 };
 
@@ -94,6 +95,39 @@ function result(label: string, value: unknown, structuredContent: Record<string,
   };
 }
 
+function creationSummary(
+  entity: unknown,
+  input: {
+    workId: string;
+    entityType: string;
+    module: string;
+    title?: string;
+    name?: string;
+    relatedEntityIds?: Record<string, unknown>;
+  }
+): Record<string, unknown> {
+  if (!entity || typeof entity !== "object" || Array.isArray(entity)) {
+    throw new Error("Scriverse 创建响应格式无效");
+  }
+  const record = entity as Record<string, unknown>;
+  if (typeof record.id !== "string" || record.id.length === 0) {
+    throw new Error("Scriverse 创建响应缺少实体 ID");
+  }
+  return {
+    success: true,
+    workId: typeof record.workId === "string" ? record.workId : input.workId,
+    entityType: input.entityType,
+    entityId: record.id,
+    ...(input.title ? { title: input.title } : {}),
+    ...(input.name ? { name: input.name } : {}),
+    versionNo: typeof record.versionNo === "number" ? record.versionNo : 1,
+    module: input.module,
+    relatedEntityIds: Object.fromEntries(
+      Object.entries(input.relatedEntityIds ?? {}).filter(([, value]) => value !== undefined && value !== null)
+    )
+  };
+}
+
 function selectSummaryFields(value: unknown, fields: readonly string[]): Record<string, unknown> {
   if (!value || typeof value !== "object") return {};
   const record = value as Record<string, unknown>;
@@ -127,6 +161,7 @@ async function requestScriverse(
     query?: Record<string, string | number | boolean | undefined>;
     body?: Record<string, unknown>;
     idempotencyKey?: string;
+    allowDuplicate?: boolean;
   } = {}
 ): Promise<unknown> {
   let response: Response;
@@ -141,7 +176,8 @@ async function requestScriverse(
         Accept: "application/json",
         Authorization: `Bearer ${config.apiKey}`,
         ...(options.body ? { "Content-Type": "application/json" } : {}),
-        ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {})
+        ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}),
+        ...(options.allowDuplicate ? { "X-Scriverse-Duplicate-Policy": "create" } : {})
       },
       ...(options.body ? { body: JSON.stringify(options.body) } : {})
     });
@@ -161,7 +197,10 @@ async function requestScriverse(
   if (!response.ok) {
     const code = typeof payload.error?.code === "string" ? payload.error.code : `HTTP_${response.status}`;
     const message = typeof payload.error?.message === "string" ? payload.error.message : "Scriverse 请求失败";
-    throw new Error(`${code}: ${message}`);
+    const details = payload.error?.details && typeof payload.error.details === "object" && !Array.isArray(payload.error.details)
+      ? payload.error.details as Record<string, unknown>
+      : {};
+    throw new ScriverseMcpToolError(code, message, details);
   }
   if (!("data" in payload)) throw new Error("Scriverse 响应缺少 data 字段");
   return payload.data;
@@ -965,20 +1004,32 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
         idempotencyKey: z.string().trim().min(16).max(128)
           .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u)
           .optional()
-          .describe("可选幂等键；同一用户、作品和工具重试时复用该值")
+          .describe("可选幂等键；同一用户、作品和工具重试时复用该值"),
+        allowDuplicate: z.boolean().optional().default(false)
+          .describe("仅在已经检查候选且确认要保留重名记录时设为 true")
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     },
-    async ({ workId, idempotencyKey, ...input }) => {
+    async ({ workId, idempotencyKey, allowDuplicate, ...input }) => {
       try {
         const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
         const draft = await requestScriverse(
           fetchImpl,
           config,
           `/api/works/${encodeURIComponent(workId)}/drafts`,
-          { method: "POST", body, idempotencyKey }
+          { method: "POST", body, idempotencyKey, allowDuplicate }
         );
-        return result("已创建 Scriverse 想法：", draft, { draft });
+        const creation = creationSummary(draft, {
+          workId,
+          entityType: "draft",
+          module: input.draftType === "prose" ? "prose-drafts" : "setting-drafts",
+          title: input.title,
+          relatedEntityIds: {
+            volumeId: input.volumeId,
+            settingModule: input.settingModule
+          }
+        });
+        return result("已创建 Scriverse 想法：", creation, { draft, creation });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

@@ -10,6 +10,7 @@ type RecordedRequest = {
   authorization: string | undefined;
   body: unknown;
   idempotencyKey?: string;
+  duplicatePolicy?: string;
 };
 
 const openClients: Client[] = [];
@@ -24,6 +25,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 
 async function startScriverseFixture(options: {
   works?: Array<Record<string, unknown>>;
+  draftDuplicate?: boolean;
 } = {}): Promise<{ baseUrl: string; requests: RecordedRequest[] }> {
   const requests: RecordedRequest[] = [];
   const works = options.works ?? [{ id: "work-1", title: "星海余烬" }];
@@ -37,6 +39,9 @@ async function startScriverseFixture(options: {
         body,
         ...(typeof request.headers["idempotency-key"] === "string"
           ? { idempotencyKey: request.headers["idempotency-key"] }
+          : {}),
+        ...(typeof request.headers["x-scriverse-duplicate-policy"] === "string"
+          ? { duplicatePolicy: request.headers["x-scriverse-duplicate-policy"] }
           : {})
       });
       response.setHeader("Content-Type", "application/json");
@@ -544,8 +549,21 @@ async function startScriverseFixture(options: {
         return;
       }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
+        if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
+          response.statusCode = 409;
+          response.end(JSON.stringify({
+            error: {
+              code: "DUPLICATE_CANDIDATES",
+              message: "发现疑似重名的想法，请确认是更新已有记录还是继续新增",
+              details: {
+                candidates: [{ id: "draft-existing", entityType: "draft", title: "失忆的领航员", versionNo: 3 }]
+              }
+            }
+          }));
+          return;
+        }
         response.statusCode = 201;
-        response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
+        response.end(JSON.stringify({ data: { id: "draft-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
       response.statusCode = 404;
@@ -1413,10 +1431,22 @@ describe("Scriverse MCP Bridge", () => {
     expect(result.structuredContent).toEqual({
       draft: {
         id: "draft-2",
+        workId: "work-1",
+        versionNo: 1,
         draftType: "setting",
         settingModule: "characters",
         title: "失忆的领航员",
         content: "她能记住所有星图，却认不出自己的名字。"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "draft",
+        entityId: "draft-2",
+        title: "失忆的领航员",
+        versionNo: 1,
+        module: "setting-drafts",
+        relatedEntityIds: { settingModule: "characters" }
       }
     });
     expect(fixture.requests[0]).toEqual({
@@ -1431,6 +1461,37 @@ describe("Scriverse MCP Bridge", () => {
         content: "她能记住所有星图，却认不出自己的名字。"
       }
     });
+  });
+
+  it("发现想法重名候选时返回候选，并允许明确确认后继续创建", async () => {
+    const fixture = await startScriverseFixture({ draftDuplicate: true });
+    const client = await connectMcp(fixture.baseUrl);
+    const argumentsBase = {
+      workId: "work-1",
+      draftType: "setting",
+      settingModule: "characters",
+      title: "失忆的领航员",
+      content: "她能记住所有星图，却认不出自己的名字。",
+      idempotencyKey: "draft-duplicate-check-0001"
+    };
+
+    const duplicate = await client.callTool({ name: "create_draft", arguments: argumentsBase });
+    expect(duplicate.isError).toBe(true);
+    expect(duplicate.structuredContent).toEqual({
+      error: {
+        code: "DUPLICATE_CANDIDATES",
+        message: "发现疑似重名的想法，请确认是更新已有记录还是继续新增",
+        candidates: [{ id: "draft-existing", entityType: "draft", title: "失忆的领航员", versionNo: 3 }]
+      }
+    });
+
+    const created = await client.callTool({
+      name: "create_draft",
+      arguments: { ...argumentsBase, allowDuplicate: true }
+    });
+    expect(created.isError).not.toBe(true);
+    expect(created.structuredContent).toMatchObject({ creation: { success: true, entityId: "draft-2" } });
+    expect(fixture.requests.map((entry) => entry.duplicatePolicy)).toEqual([undefined, "create"]);
   });
 
   it("要求通过环境变量提供 Scriverse API Key", () => {
