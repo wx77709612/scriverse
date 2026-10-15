@@ -6615,6 +6615,23 @@ export class Store {
     return this.db.all("SELECT * FROM races WHERE work_id = ? ORDER BY name", workId).map((row) => this.mapRace(row, includeMarkdown));
   }
 
+  findRaceDuplicateCandidates(workId: string, name: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    const normalizedName = normalizeCharacterName(name);
+    return this.db.all(
+      "SELECT id, work_id, name, parent_race_id FROM races WHERE work_id = ? AND normalized_name = ? LIMIT 20",
+      workId,
+      normalizedName
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "race",
+      name: requiredString(row, "name"),
+      parentRaceId: optionalString(row, "parent_race_id"),
+      versionNo: this.currentEntityVersionNo("race", requiredString(row, "id"))
+    }));
+  }
+
   listRacesByHierarchyScope(workId: string, scope: "roots" | "descendants", includeMarkdown = true): Record<string, unknown>[] {
     this.getWork(workId);
     const hierarchyCondition = scope === "roots" ? "IS NULL" : "IS NOT NULL";

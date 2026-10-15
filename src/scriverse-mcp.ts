@@ -1166,5 +1166,44 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_race",
+    {
+      title: "创建 Scriverse 正式种族",
+      description: "把种族写入作品的正式种族模块。重名时返回已有候选，不会覆盖或合并记录。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        name: z.string().trim().min(1).max(200).describe("种族名称"),
+        isExtinct: z.boolean().optional().describe("是否已经灭绝"),
+        parentRaceId: identifier.nullable().optional().describe("同一作品内的上级种族 ID"),
+        description: z.string().max(100_000).optional().describe("种族描述"),
+        settingsMarkdown: z.string().max(200_000).optional().describe("种族设定资料，支持 Markdown"),
+        memberIds: z.array(identifier).max(1000).optional().describe("同一作品内的角色成员 ID"),
+        idempotencyKey
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const race = await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/races`, {
+          method: "POST",
+          body,
+          idempotencyKey
+        });
+        const creation = creationSummary(race, {
+          workId,
+          entityType: "race",
+          module: "races",
+          name: input.name,
+          relatedEntityIds: { parentRaceId: input.parentRaceId, memberIds: input.memberIds }
+        });
+        return result("已创建 Scriverse 正式种族：", creation, { race, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

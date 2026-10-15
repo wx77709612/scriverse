@@ -3323,8 +3323,18 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     data(response, mapRecords(races, (race) => redactRaceMembers(race, permissions)));
   });
   app.post("/api/works/:workId/races", (request, response) => {
-    const race = store.createRace(request.params.workId, parse(raceSchema, request.body));
-    data(response, redactRaceMembers(race, requestPermissions(request, request.params.workId)), 201);
+    const input = parse(raceSchema, request.body);
+    const permissions = requestPermissions(request, request.params.workId);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "race.create",
+      input,
+      () => redactRaceMembers(store.createRace(request.params.workId, input), permissions),
+      201,
+      () => store.findRaceDuplicateCandidates(request.params.workId, input.name)
+    );
   });
   app.get("/api/races/:raceId", (request, response) => {
     data(response, redactRaceMembers(store.getRace(request.params.raceId), requestPermissions(request)));

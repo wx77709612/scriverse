@@ -310,6 +310,27 @@ describe("MCP 写入幂等契约", () => {
     )).toEqual({ action: "character-section.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建正式种族并在重名时返回候选", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_race");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const payload = { name: "星裔", description: "诞生于恒星灰烬。" };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/races`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-race-create-0001").send(payload).expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/races`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-race-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/races`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-race-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "race", name: "星裔", versionNo: 1 })] }
+    });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'race.created'", created.body.data.id))
+      .toEqual({ action: "race.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

@@ -565,6 +565,11 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/races") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "race-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -650,7 +655,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_draft",
       "create_setting",
       "create_character",
-      "create_character_section"
+      "create_character_section",
+      "create_race"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1663,6 +1669,32 @@ describe("Scriverse MCP Bridge", () => {
         versionNo: 1,
         module: "characters",
         relatedEntityIds: { characterId: "character-1" }
+      }
+    });
+  });
+
+  it("创建正式种族并返回层级关联", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_race",
+      arguments: {
+        workId: "work-1",
+        name: "星裔",
+        parentRaceId: "race-1",
+        description: "诞生于恒星灰烬。",
+        idempotencyKey: "race-create-0001"
+      }
+    });
+    expect(created.structuredContent).toMatchObject({
+      race: { id: "race-2", workId: "work-1", name: "星裔", parentRaceId: "race-1" },
+      creation: {
+        success: true,
+        entityType: "race",
+        entityId: "race-2",
+        name: "星裔",
+        module: "races",
+        relatedEntityIds: { parentRaceId: "race-1" }
       }
     });
   });
