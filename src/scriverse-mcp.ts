@@ -1,6 +1,6 @@
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { DRAFT_SETTING_MODULES } from "./domain.js";
+import { CHARACTER_GENDERS, DRAFT_SETTING_MODULES } from "./domain.js";
 import { HYBRID_SEARCH_TYPES, MAXIMUM_WORK_SEARCH_QUERY_LENGTH } from "./hybrid-search.js";
 import { APP_VERSION } from "./version.js";
 
@@ -1071,6 +1071,52 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
           title: input.title
         });
         return result("已创建 Scriverse 正式设定：", creation, { setting, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_character",
+    {
+      title: "创建 Scriverse 正式角色",
+      description: "把角色写入作品的正式角色模块。名称或别名冲突时返回已有候选，不会覆盖已有角色；需要新增时请改用可区分的新名称。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        name: z.string().trim().min(1).max(200).describe("角色标准名"),
+        gender: z.enum(CHARACTER_GENDERS).optional().describe("角色性别"),
+        isDead: z.boolean().optional().describe("角色是否已经死亡"),
+        code: z.string().trim().max(200).optional().describe("角色代号"),
+        aliases: z.array(z.string().trim().min(1).max(200)).max(100).optional().describe("别名列表"),
+        raceId: identifier.nullable().optional().describe("同一作品内的种族 ID"),
+        organizationIds: z.array(identifier).max(100).optional().describe("同一作品内的组织 ID"),
+        firstChapterId: identifier.nullable().optional().describe("同一作品内的首次登场章节 ID"),
+        idempotencyKey
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const character = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/characters`,
+          { method: "POST", body, idempotencyKey }
+        );
+        const creation = creationSummary(character, {
+          workId,
+          entityType: "character",
+          module: "characters",
+          name: input.name,
+          relatedEntityIds: {
+            raceId: input.raceId,
+            organizationIds: input.organizationIds,
+            firstChapterId: input.firstChapterId
+          }
+        });
+        return result("已创建 Scriverse 正式角色：", creation, { character, creation });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

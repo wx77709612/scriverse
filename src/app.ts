@@ -3057,8 +3057,18 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     data(response, mapRecords(characters, (character) => redactCharacterLinks(character, permissions)));
   });
   app.post("/api/works/:workId/characters", (request, response) => {
-    const character = store.createCharacter(request.params.workId, parse(characterSchema, request.body));
-    data(response, redactCharacterLinks(character, requestPermissions(request, request.params.workId)), 201);
+    const input = parse(characterSchema, request.body);
+    const permissions = requestPermissions(request, request.params.workId);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "character.create",
+      input,
+      () => redactCharacterLinks(store.createCharacter(request.params.workId, input), permissions),
+      201,
+      () => store.findCharacterDuplicateCandidates(request.params.workId, input.name, input.aliases)
+    );
   });
   app.get("/api/characters/:characterId", (request, response) => {
     data(response, redactCharacterLinks(store.getCharacter(request.params.characterId), requestPermissions(request)));

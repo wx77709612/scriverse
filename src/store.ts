@@ -7371,6 +7371,29 @@ export class Store {
       .map((row) => this.mapCharacter(row, includeProfileSections, includeRaceMarkdown));
   }
 
+  findCharacterDuplicateCandidates(workId: string, name: string, aliases: string[] = []): Record<string, unknown>[] {
+    this.getWork(workId);
+    const names = this.prepareCharacterNames(name, aliases).entries.map((entry) => entry.normalizedName);
+    const placeholders = names.map(() => "?").join(", ");
+    return this.db.all(
+      `SELECT DISTINCT character.id, character.work_id, character.name, character.version_no
+       FROM character_names name
+       JOIN characters character ON character.id = name.character_id
+       WHERE name.work_id = ? AND name.normalized_name IN (${placeholders})
+         AND character.merged_into_character_id IS NULL
+       ORDER BY character.updated_at DESC, character.id
+       LIMIT 20`,
+      workId,
+      ...names
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "character",
+      name: requiredString(row, "name"),
+      versionNo: numberValue(row, "version_no")
+    }));
+  }
+
   listCharactersPage(workId: string, pagination: Pagination, includeProfileSections = false, includeMerged = false, includeRaceMarkdown = true): PaginatedResult<Record<string, unknown>> {
     this.getWork(workId);
     const preferences = this.entityPreferenceProjection("character", "character");

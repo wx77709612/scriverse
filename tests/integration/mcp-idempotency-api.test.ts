@@ -233,6 +233,45 @@ describe("MCP 写入幂等契约", () => {
     )).toEqual({ action: "setting.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建正式角色并在名称或别名冲突时返回候选", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_character");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const payload = { name: "沈砚", gender: "female", aliases: ["领航员"] };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/characters`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-character-create-0001")
+      .send(payload)
+      .expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/characters`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-character-create-0001")
+      .send(payload)
+      .expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const conflict = await request(runtime.app).post(`/api/works/${fixture.workId}/characters`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-character-create-0002")
+      .send({ name: "新角色", aliases: ["领航员"] })
+      .expect(409);
+    expect(conflict.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: {
+        candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "character", name: "沈砚", versionNo: 1 })]
+      }
+    });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM character_versions WHERE character_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get(
+      "SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'character.created'",
+      created.body.data.id
+    )).toEqual({ action: "character.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

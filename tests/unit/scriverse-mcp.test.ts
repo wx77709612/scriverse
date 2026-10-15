@@ -553,6 +553,11 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "setting-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/characters") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "character-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -636,7 +641,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_writing_goal",
       "search_work_entities",
       "create_draft",
-      "create_setting"
+      "create_setting",
+      "create_character"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1550,6 +1556,66 @@ describe("Scriverse MCP Bridge", () => {
         content: "以恒星灰烬校准的远航信标。",
         tags: ["航行", "科技"],
         status: "confirmed"
+      }
+    });
+  });
+
+  it("创建正式角色并保留种族、组织和首登场章节关联", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_character",
+      arguments: {
+        workId: "work-1",
+        name: "沈砚",
+        gender: "female",
+        aliases: ["领航员"],
+        raceId: "race-1",
+        organizationIds: ["organization-1"],
+        firstChapterId: "chapter-26",
+        idempotencyKey: "character-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      character: {
+        id: "character-2",
+        workId: "work-1",
+        versionNo: 1,
+        name: "沈砚",
+        gender: "female",
+        aliases: ["领航员"],
+        raceId: "race-1",
+        organizationIds: ["organization-1"],
+        firstChapterId: "chapter-26"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "character",
+        entityId: "character-2",
+        name: "沈砚",
+        versionNo: 1,
+        module: "characters",
+        relatedEntityIds: {
+          raceId: "race-1",
+          organizationIds: ["organization-1"],
+          firstChapterId: "chapter-26"
+        }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/works/work-1/characters",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "character-create-0001",
+      body: {
+        name: "沈砚",
+        gender: "female",
+        aliases: ["领航员"],
+        raceId: "race-1",
+        organizationIds: ["organization-1"],
+        firstChapterId: "chapter-26"
       }
     });
   });
