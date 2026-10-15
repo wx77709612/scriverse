@@ -893,6 +893,32 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "get_writing_goal",
+    {
+      title: "读取 Scriverse 写作目标",
+      description: "读取指定作品的每日目标、总字数目标、截止日期和最近更新时间，不返回完整写作趋势。",
+      inputSchema: z.object({ workId: identifier.describe("作品 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId }) => {
+      try {
+        const progress = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/writing-progress`
+        );
+        if (!progress || typeof progress !== "object") throw new Error("Scriverse 写作进度响应格式无效");
+        const goal = (progress as Record<string, unknown>).goal;
+        if (!goal || typeof goal !== "object") throw new Error("Scriverse 写作进度响应缺少 goal 字段");
+        const writingGoal = { workId, ...(goal as Record<string, unknown>) };
+        return result("Scriverse 写作目标：", writingGoal, { writingGoal });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",

@@ -512,6 +512,19 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/writing-progress") {
+        response.end(JSON.stringify({
+          data: {
+            goal: { dailyGoal: 1500, targetTotal: 120000, deadline: "2027-03-01", updatedAt: "2026-10-15T06:00:00.000Z" },
+            currentWords: 64000,
+            todayWords: 1800,
+            dailyCompletion: 1,
+            totalCompletion: 0.5333,
+            trend: []
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -579,6 +592,7 @@ describe("Scriverse MCP Bridge", () => {
       "get_chapter_outline",
       "list_foreshadows",
       "get_foreshadow",
+      "get_writing_goal",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -1291,6 +1305,30 @@ describe("Scriverse MCP Bridge", () => {
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/foreshadows?status=unresolved&currentChapterId=chapter-26&page=1&limit=20",
       "/api/foreshadows/foreshadow-1"
+    ]);
+  });
+
+  it("读取作品写作目标而不返回整段趋势数据", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const result = await client.callTool({
+      name: "get_writing_goal",
+      arguments: { workId: "work-1" }
+    });
+
+    expect(result.structuredContent).toEqual({
+      writingGoal: {
+        workId: "work-1",
+        dailyGoal: 1500,
+        targetTotal: 120000,
+        deadline: "2027-03-01",
+        updatedAt: "2026-10-15T06:00:00.000Z"
+      }
+    });
+    expect(JSON.stringify(result.structuredContent)).not.toContain("trend");
+    expect(fixture.requests).toEqual([
+      { method: "GET", url: "/api/works/work-1/writing-progress", authorization: "Bearer scrv_test-secret", body: null }
     ]);
   });
 
