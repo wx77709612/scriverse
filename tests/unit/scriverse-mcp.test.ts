@@ -154,6 +154,38 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/settings?includeContent=false&page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "setting-1",
+              workId: "work-1",
+              title: "灰烬航标",
+              category: "科技",
+              contentExcerpt: "以恒星灰烬校准的远航信标。",
+              versionNo: 4
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/settings/setting-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "setting-1",
+            workId: "work-1",
+            title: "灰烬航标",
+            category: "科技",
+            content: "灰烬航标以恒星灰烬校准，可在跃迁结束后重建航线。",
+            versionNo: 4
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -201,6 +233,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_chapter",
       "list_drafts",
       "get_draft",
+      "list_settings",
+      "get_setting",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -454,6 +488,57 @@ describe("Scriverse MCP Bridge", () => {
 
     expect(invalid.isError).toBe(true);
     expect(fixture.requests).toEqual([]);
+  });
+
+  it("分页读取设定摘要并按 ID 读取完整设定", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const settings = await client.callTool({
+      name: "list_settings",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const setting = await client.callTool({
+      name: "get_setting",
+      arguments: { settingId: "setting-1" }
+    });
+
+    expect(settings.structuredContent).toEqual({
+      settings: {
+        items: [{
+          id: "setting-1",
+          workId: "work-1",
+          title: "灰烬航标",
+          category: "科技",
+          contentExcerpt: "以恒星灰烬校准的远航信标。",
+          versionNo: 4
+        }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(JSON.stringify(settings.structuredContent)).not.toContain("跃迁结束");
+    expect(setting.structuredContent).toEqual({
+      setting: {
+        id: "setting-1",
+        workId: "work-1",
+        title: "灰烬航标",
+        category: "科技",
+        content: "灰烬航标以恒星灰烬校准，可在跃迁结束后重建航线。",
+        versionNo: 4
+      }
+    });
+    expect(fixture.requests).toEqual([
+      {
+        method: "GET",
+        url: "/api/works/work-1/settings?includeContent=false&page=1&limit=20",
+        authorization: "Bearer scrv_test-secret",
+        body: null
+      },
+      { method: "GET", url: "/api/settings/setting-1", authorization: "Bearer scrv_test-secret", body: null }
+    ]);
   });
 
   it("把 GPT 生成内容保存为 Scriverse 想法", async () => {

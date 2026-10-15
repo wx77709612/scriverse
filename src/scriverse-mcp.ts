@@ -369,6 +369,57 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_settings",
+    {
+      title: "列出 Scriverse 设定",
+      description: "分页列出指定作品的设定摘要。结果默认不包含完整 Markdown 内容，需要完整内容时请调用 get_setting。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的设定摘要数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, page, limit }) => {
+      try {
+        const settings = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/settings`,
+          { query: { includeContent: false, page, limit } }
+        );
+        return result("Scriverse 设定摘要：", settings, { settings });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_setting",
+    {
+      title: "读取 Scriverse 设定",
+      description: "按设定 ID 读取完整内容、分类、状态和版本信息。",
+      inputSchema: z.object({
+        settingId: identifier.describe("设定 ID")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ settingId }) => {
+      try {
+        const setting = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/settings/${encodeURIComponent(settingId)}`
+        );
+        return result("Scriverse 设定详情：", setting, { setting });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",
