@@ -364,6 +364,44 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/relationships?minimumConfidence=0&page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "relationship-1",
+              workId: "work-1",
+              fromCharacterId: "character-1",
+              toCharacterId: "character-2",
+              label: "导师",
+              category: "alliance",
+              confidence: 0.9,
+              versionNo: 3
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/relationships/relationship-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "relationship-1",
+            workId: "work-1",
+            fromCharacterId: "character-1",
+            toCharacterId: "character-2",
+            label: "导师",
+            reverseLabel: "学生",
+            category: "alliance",
+            description: "沈砚在跃迁学院指导林舟。",
+            confidence: 0.9,
+            versionNo: 3
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -425,6 +463,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_timeline_track",
       "list_timeline_events",
       "get_timeline_event",
+      "list_relationships",
+      "get_relationship",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -956,6 +996,57 @@ describe("Scriverse MCP Bridge", () => {
       "/api/timeline-tracks/track-1",
       "/api/works/work-1/timeline?page=1&limit=20",
       "/api/timeline/event-1"
+    ]);
+  });
+
+  it("分页读取人物关系摘要并按 ID 获取完整关系", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const relationships = await client.callTool({
+      name: "list_relationships",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const relationship = await client.callTool({
+      name: "get_relationship",
+      arguments: { relationshipId: "relationship-1" }
+    });
+
+    expect(relationships.structuredContent).toEqual({
+      relationships: {
+        items: [{
+          id: "relationship-1",
+          workId: "work-1",
+          fromCharacterId: "character-1",
+          toCharacterId: "character-2",
+          label: "导师",
+          category: "alliance",
+          confidence: 0.9,
+          versionNo: 3
+        }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(relationship.structuredContent).toEqual({
+      relationship: {
+        id: "relationship-1",
+        workId: "work-1",
+        fromCharacterId: "character-1",
+        toCharacterId: "character-2",
+        label: "导师",
+        reverseLabel: "学生",
+        category: "alliance",
+        description: "沈砚在跃迁学院指导林舟。",
+        confidence: 0.9,
+        versionNo: 3
+      }
+    });
+    expect(fixture.requests.map((request) => request.url)).toEqual([
+      "/api/works/work-1/relationships?minimumConfidence=0&page=1&limit=20",
+      "/api/relationships/relationship-1"
     ]);
   });
 

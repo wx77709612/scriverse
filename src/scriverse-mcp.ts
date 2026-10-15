@@ -708,6 +708,56 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_relationships",
+    {
+      title: "列出 Scriverse 人物关系",
+      description: "分页列出指定作品的人物关系摘要，可按最低置信度过滤。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        minimumConfidence: z.number().finite().min(0).max(1).default(0).describe("最低置信度，范围 0 到 1"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的关系数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, minimumConfidence, page, limit }) => {
+      try {
+        const relationships = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/relationships`,
+          { query: { minimumConfidence, page, limit } }
+        );
+        return result("Scriverse 人物关系摘要：", relationships, { relationships });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_relationship",
+    {
+      title: "读取 Scriverse 人物关系",
+      description: "按关系 ID 读取双向标签、人物关联、描述、置信度和版本信息。",
+      inputSchema: z.object({ relationshipId: identifier.describe("人物关系 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ relationshipId }) => {
+      try {
+        const relationship = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/relationships/${encodeURIComponent(relationshipId)}`
+        );
+        return result("Scriverse 人物关系详情：", relationship, { relationship });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",
