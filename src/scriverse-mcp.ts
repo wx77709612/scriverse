@@ -20,6 +20,18 @@ type ApiEnvelope = {
   };
 };
 
+class ScriverseMcpToolError extends Error {
+  readonly code: string;
+  readonly details: Record<string, unknown>;
+
+  constructor(code: string, message: string, details: Record<string, unknown> = {}) {
+    super(message);
+    this.name = "ScriverseMcpToolError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
 const identifier = z.string().trim().min(1).max(200);
 
 function normalizeBaseUrl(value: string): string {
@@ -54,6 +66,20 @@ function safeErrorMessage(error: unknown, apiKey: string): string {
 }
 
 function errorResult(error: unknown, apiKey: string): CallToolResult {
+  if (error instanceof ScriverseMcpToolError) {
+    const message = safeErrorMessage(error, apiKey);
+    return {
+      isError: true,
+      content: [{ type: "text", text: `${error.code}: ${message}` }],
+      structuredContent: {
+        error: {
+          code: error.code,
+          message,
+          ...error.details
+        }
+      }
+    };
+  }
   return {
     isError: true,
     content: [{ type: "text", text: safeErrorMessage(error, apiKey) }]
@@ -71,11 +97,19 @@ async function requestScriverse(
   fetchImpl: typeof fetch,
   config: ScriverseMcpConfig,
   path: string,
-  options: { method?: "GET" | "POST"; body?: Record<string, unknown> } = {}
+  options: {
+    method?: "GET" | "POST";
+    query?: Record<string, string | number | boolean | undefined>;
+    body?: Record<string, unknown>;
+  } = {}
 ): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetchImpl(`${config.baseUrl}${path}`, {
+    const url = new URL(`${config.baseUrl}${path}`);
+    for (const [name, value] of Object.entries(options.query ?? {})) {
+      if (value !== undefined) url.searchParams.set(name, String(value));
+    }
+    response = await fetchImpl(url, {
       method: options.method ?? "GET",
       headers: {
         Accept: "application/json",
@@ -106,6 +140,42 @@ async function requestScriverse(
   return payload.data;
 }
 
+function workCandidate(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || typeof record.title !== "string") return null;
+  return {
+    id: record.id,
+    title: record.title,
+    ...(typeof record.author === "string" ? { author: record.author } : {})
+  };
+}
+
+async function resolveWorkId(
+  fetchImpl: typeof fetch,
+  config: ScriverseMcpConfig,
+  reference: { workId?: string; workTitle?: string }
+): Promise<string> {
+  if (reference.workId) return reference.workId;
+  const works = await requestScriverse(fetchImpl, config, "/api/works");
+  if (!Array.isArray(works)) throw new Error("Scriverse 作品列表格式无效");
+  const candidates = works.map(workCandidate).filter((work): work is Record<string, unknown> => work !== null);
+  const matches = candidates.filter((work) => work.title === reference.workTitle);
+  if (matches.length === 1) return String(matches[0]!.id);
+  if (matches.length > 1) {
+    throw new ScriverseMcpToolError(
+      "WORK_TITLE_AMBIGUOUS",
+      "存在多个同名作品，请使用 workId 明确选择",
+      { candidates: matches }
+    );
+  }
+  throw new ScriverseMcpToolError(
+    "WORK_TITLE_NOT_FOUND",
+    "没有找到完全同名且当前 API Key 可访问的作品",
+    { candidates: candidates.filter((work) => String(work.title).includes(reference.workTitle ?? "")).slice(0, 10) }
+  );
+}
+
 export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies): McpServer {
   const config: ScriverseMcpConfig = {
     baseUrl: normalizeBaseUrl(dependencies.baseUrl),
@@ -126,6 +196,38 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
       try {
         const works = await requestScriverse(fetchImpl, config, "/api/works");
         return result("Scriverse 作品：", works, { works });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_work_directory",
+    {
+      title: "获取 Scriverse 作品目录",
+      description: "按作品 ID 或精确作品名称定位作品，并分页返回分卷和章节摘要。目录不包含章节正文；需要正文时请再按章节 ID 读取。",
+      inputSchema: z.object({
+        workId: identifier.optional().describe("作品 ID；与 workTitle 二选一"),
+        workTitle: z.string().trim().min(1).max(200).optional().describe("作品的精确名称；与 workId 二选一"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("章节目录页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的章节摘要数")
+      }).strict().refine(
+        (input) => (input.workId === undefined) !== (input.workTitle === undefined),
+        { message: "workId 与 workTitle 必须且只能提供一个" }
+      ),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, workTitle, page, limit }) => {
+      try {
+        const resolvedWorkId = await resolveWorkId(fetchImpl, config, { workId, workTitle });
+        const directory = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(resolvedWorkId)}`,
+          { query: { page, limit } }
+        );
+        return result("Scriverse 作品目录：", directory, { directory });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

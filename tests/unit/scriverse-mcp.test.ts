@@ -21,8 +21,11 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-async function startScriverseFixture(): Promise<{ baseUrl: string; requests: RecordedRequest[] }> {
+async function startScriverseFixture(options: {
+  works?: Array<Record<string, unknown>>;
+} = {}): Promise<{ baseUrl: string; requests: RecordedRequest[] }> {
   const requests: RecordedRequest[] = [];
+  const works = options.works ?? [{ id: "work-1", title: "星海余烬" }];
   const server = createServer((request, response) => {
     void (async () => {
       const body = await readJson(request);
@@ -34,7 +37,31 @@ async function startScriverseFixture(): Promise<{ baseUrl: string; requests: Rec
       });
       response.setHeader("Content-Type", "application/json");
       if (request.method === "GET" && request.url === "/api/works") {
-        response.end(JSON.stringify({ data: [{ id: "work-1", title: "星海余烬" }] }));
+        response.end(JSON.stringify({ data: works }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/works/work-1?page=2&limit=25") {
+        response.end(JSON.stringify({
+          data: {
+            id: "work-1",
+            title: "星海余烬",
+            versionNo: 7,
+            volumes: [{
+              id: "volume-1",
+              workId: "work-1",
+              title: "第一卷",
+              chapters: [{
+                id: "chapter-26",
+                workId: "work-1",
+                volumeId: "volume-1",
+                title: "第二十六章 归航",
+                wordCount: 3200,
+                versionNo: 3
+              }]
+            }],
+            directoryPage: { page: 2, limit: 25, hasMore: true, nextPage: 3 }
+          }
+        }));
         return;
       }
       if (request.method === "GET" && request.url === "/api/works/work-1/drafts?includeContent=false") {
@@ -74,19 +101,108 @@ afterEach(async () => {
 });
 
 describe("Scriverse MCP Bridge", () => {
-  it("只公开查看作品、查看想法和创建想法三个工具", async () => {
+  it("公开分页作品目录工具并声明严格的输入边界", async () => {
     const fixture = await startScriverseFixture();
     const client = await connectMcp(fixture.baseUrl);
 
     const result = await client.listTools();
 
-    expect(result.tools.map((tool) => tool.name)).toEqual(["list_works", "list_drafts", "create_draft"]);
+    expect(result.tools.map((tool) => tool.name)).toEqual([
+      "list_works",
+      "get_work_directory",
+      "list_drafts",
+      "create_draft"
+    ]);
+    const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
+    expect(directoryTool?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false
+    });
+    expect(directoryTool?.inputSchema).toMatchObject({
+      additionalProperties: false,
+      properties: {
+        workId: { type: "string", maxLength: 200 },
+        workTitle: { type: "string", maxLength: 200 },
+        page: { type: "integer", minimum: 1, maximum: 100_000, default: 1 },
+        limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }
+      }
+    });
     expect(result.tools.find((tool) => tool.name === "create_draft")?.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
       idempotentHint: false,
       openWorldHint: false
     });
+  });
+
+  it("按作品名称定位并分页返回不含正文的作品目录", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const result = await client.callTool({
+      name: "get_work_directory",
+      arguments: { workTitle: "星海余烬", page: 2, limit: 25 }
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({
+      directory: {
+        id: "work-1",
+        title: "星海余烬",
+        versionNo: 7,
+        volumes: [{
+          id: "volume-1",
+          workId: "work-1",
+          title: "第一卷",
+          chapters: [{
+            id: "chapter-26",
+            workId: "work-1",
+            volumeId: "volume-1",
+            title: "第二十六章 归航",
+            wordCount: 3200,
+            versionNo: 3
+          }]
+        }],
+        directoryPage: { page: 2, limit: 25, hasMore: true, nextPage: 3 }
+      }
+    });
+    expect(JSON.stringify(result.structuredContent)).not.toContain("content");
+    expect(fixture.requests).toEqual([
+      { method: "GET", url: "/api/works", authorization: "Bearer scrv_test-secret", body: null },
+      { method: "GET", url: "/api/works/work-1?page=2&limit=25", authorization: "Bearer scrv_test-secret", body: null }
+    ]);
+  });
+
+  it("作品名称重名时返回候选而不猜测目标作品", async () => {
+    const fixture = await startScriverseFixture({
+      works: [
+        { id: "work-1", title: "星海余烬", author: "甲" },
+        { id: "work-2", title: "星海余烬", author: "乙" }
+      ]
+    });
+    const client = await connectMcp(fixture.baseUrl);
+
+    const result = await client.callTool({
+      name: "get_work_directory",
+      arguments: { workTitle: "星海余烬" }
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual({
+      error: {
+        code: "WORK_TITLE_AMBIGUOUS",
+        message: "存在多个同名作品，请使用 workId 明确选择",
+        candidates: [
+          { id: "work-1", title: "星海余烬", author: "甲" },
+          { id: "work-2", title: "星海余烬", author: "乙" }
+        ]
+      }
+    });
+    expect(fixture.requests).toEqual([
+      { method: "GET", url: "/api/works", authorization: "Bearer scrv_test-secret", body: null }
+    ]);
   });
 
   it("使用本地 API Key 获取作品和想法", async () => {
