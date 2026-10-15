@@ -525,6 +525,20 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/search?q=%E7%81%B0%E7%83%AC&type=character&limit=10") {
+        response.end(JSON.stringify({
+          data: [{
+            type: "character",
+            id: "character-1",
+            title: "沈砚",
+            subtitle: "领航员",
+            snippet: "曾参与灰烬航标试验。",
+            score: 0.032,
+            matchKinds: ["exact"]
+          }]
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -593,6 +607,7 @@ describe("Scriverse MCP Bridge", () => {
       "list_foreshadows",
       "get_foreshadow",
       "get_writing_goal",
+      "search_work_entities",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -1330,6 +1345,49 @@ describe("Scriverse MCP Bridge", () => {
     expect(fixture.requests).toEqual([
       { method: "GET", url: "/api/works/work-1/writing-progress", authorization: "Bearer scrv_test-secret", body: null }
     ]);
+  });
+
+  it("按关键词和实体类型搜索当前权限可读的作品资料", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const result = await client.callTool({
+      name: "search_work_entities",
+      arguments: { workId: "work-1", query: "灰烬", entityType: "character", limit: 10 }
+    });
+
+    expect(result.structuredContent).toEqual({
+      results: [{
+        type: "character",
+        id: "character-1",
+        title: "沈砚",
+        subtitle: "领航员",
+        snippet: "曾参与灰烬航标试验。",
+        score: 0.032,
+        matchKinds: ["exact"]
+      }]
+    });
+    expect(fixture.requests).toEqual([
+      {
+        method: "GET",
+        url: "/api/works/work-1/search?q=%E7%81%B0%E7%83%AC&type=character&limit=10",
+        authorization: "Bearer scrv_test-secret",
+        body: null
+      }
+    ]);
+  });
+
+  it("在发起搜索请求前拒绝超过一百字符的关键词", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const invalid = await client.callTool({
+      name: "search_work_entities",
+      arguments: { workId: "work-1", query: "超".repeat(101) }
+    });
+
+    expect(invalid.isError).toBe(true);
+    expect(fixture.requests).toEqual([]);
   });
 
   it("把 GPT 生成内容保存为 Scriverse 想法", async () => {

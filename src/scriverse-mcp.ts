@@ -1,6 +1,7 @@
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { DRAFT_SETTING_MODULES } from "./domain.js";
+import { HYBRID_SEARCH_TYPES, MAXIMUM_WORK_SEARCH_QUERY_LENGTH } from "./hybrid-search.js";
 import { APP_VERSION } from "./version.js";
 
 export type ScriverseMcpConfig = {
@@ -912,6 +913,35 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
         if (!goal || typeof goal !== "object") throw new Error("Scriverse 写作进度响应缺少 goal 字段");
         const writingGoal = { workId, ...(goal as Record<string, unknown>) };
         return result("Scriverse 写作目标：", writingGoal, { writingGoal });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "search_work_entities",
+    {
+      title: "搜索 Scriverse 作品资料",
+      description: "按关键词搜索当前 API Key 在指定作品中有权读取的章节和设定库实体，可限定一种实体类型。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        query: z.string().trim().min(1).max(MAXIMUM_WORK_SEARCH_QUERY_LENGTH).describe("搜索关键词"),
+        entityType: z.enum(HYBRID_SEARCH_TYPES).optional().describe("可选实体类型筛选"),
+        limit: z.number().int().min(1).max(100).default(20).describe("最多返回的结果数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, query, entityType, limit }) => {
+      try {
+        const results = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/search`,
+          { query: { q: query, type: entityType, limit } }
+        );
+        if (!Array.isArray(results)) throw new Error("Scriverse 搜索响应格式无效");
+        return result("Scriverse 搜索结果：", results, { results });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }
