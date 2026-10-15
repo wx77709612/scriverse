@@ -120,6 +120,40 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: [{ id: "draft-1", title: "雨夜开场" }] }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/drafts?includeContent=false&draftType=setting&page=2&limit=10") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "draft-3",
+              workId: "work-1",
+              draftType: "setting",
+              settingModule: "organizations",
+              title: "观星会",
+              contentExcerpt: "他们记录每一颗熄灭的恒星。",
+              versionNo: 2
+            }],
+            page: 2,
+            limit: 10,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/drafts/draft-3") {
+        response.end(JSON.stringify({
+          data: {
+            id: "draft-3",
+            workId: "work-1",
+            draftType: "setting",
+            settingModule: "organizations",
+            title: "观星会",
+            content: "他们记录每一颗熄灭的恒星，并把灰烬封存在航海钟里。",
+            versionNo: 2
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -166,6 +200,7 @@ describe("Scriverse MCP Bridge", () => {
       "list_chapters",
       "get_chapter",
       "list_drafts",
+      "get_draft",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -353,6 +388,72 @@ describe("Scriverse MCP Bridge", () => {
       { method: "GET", url: "/api/works", authorization: "Bearer scrv_test-secret", body: null },
       { method: "GET", url: "/api/works/work-1/drafts?includeContent=false", authorization: "Bearer scrv_test-secret", body: null }
     ]);
+  });
+
+  it("分页读取想法摘要并按 ID 读取完整内容", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const drafts = await client.callTool({
+      name: "list_drafts",
+      arguments: { workId: "work-1", draftType: "setting", page: 2, limit: 10 }
+    });
+    const draft = await client.callTool({
+      name: "get_draft",
+      arguments: { draftId: "draft-3" }
+    });
+
+    expect(drafts.structuredContent).toEqual({
+      drafts: {
+        items: [{
+          id: "draft-3",
+          workId: "work-1",
+          draftType: "setting",
+          settingModule: "organizations",
+          title: "观星会",
+          contentExcerpt: "他们记录每一颗熄灭的恒星。",
+          versionNo: 2
+        }],
+        page: 2,
+        limit: 10,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(JSON.stringify(drafts.structuredContent)).not.toContain("航海钟");
+    expect(draft.structuredContent).toEqual({
+      draft: {
+        id: "draft-3",
+        workId: "work-1",
+        draftType: "setting",
+        settingModule: "organizations",
+        title: "观星会",
+        content: "他们记录每一颗熄灭的恒星，并把灰烬封存在航海钟里。",
+        versionNo: 2
+      }
+    });
+    expect(fixture.requests).toEqual([
+      {
+        method: "GET",
+        url: "/api/works/work-1/drafts?includeContent=false&draftType=setting&page=2&limit=10",
+        authorization: "Bearer scrv_test-secret",
+        body: null
+      },
+      { method: "GET", url: "/api/drafts/draft-3", authorization: "Bearer scrv_test-secret", body: null }
+    ]);
+  });
+
+  it("拒绝详情工具中的未知字段且不发起 REST 请求", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const invalid = await client.callTool({
+      name: "get_draft",
+      arguments: { draftId: "draft-3", unexpected: true }
+    });
+
+    expect(invalid.isError).toBe(true);
+    expect(fixture.requests).toEqual([]);
   });
 
   it("把 GPT 生成内容保存为 Scriverse 想法", async () => {

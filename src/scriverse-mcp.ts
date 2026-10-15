@@ -323,20 +323,45 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
       inputSchema: z.object({
         workId: identifier.describe("作品 ID"),
         draftType: z.enum(["prose", "setting"]).optional().describe("正文类或设定库类想法"),
-        includeContent: z.boolean().default(false).describe("是否返回完整内容；默认只返回内容摘要")
+        includeContent: z.boolean().default(false).describe("是否返回完整内容；默认只返回内容摘要"),
+        page: z.number().int().min(1).max(100_000).optional().describe("可选页码；不传时保持旧版数组结果"),
+        limit: z.number().int().min(1).max(100).optional().describe("可选每页数量；传入分页参数后返回分页结果")
       }).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     },
-    async ({ workId, draftType, includeContent }) => {
+    async ({ workId, draftType, includeContent, page, limit }) => {
       try {
-        const query = new URLSearchParams({ includeContent: String(includeContent) });
-        if (draftType) query.set("draftType", draftType);
         const drafts = await requestScriverse(
           fetchImpl,
           config,
-          `/api/works/${encodeURIComponent(workId)}/drafts?${query.toString()}`
+          `/api/works/${encodeURIComponent(workId)}/drafts`,
+          { query: { includeContent, draftType, page, limit } }
         );
         return result("Scriverse 想法：", drafts, { drafts });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_draft",
+    {
+      title: "读取 Scriverse 想法",
+      description: "按想法 ID 读取完整内容、分类、关联模块和版本信息。",
+      inputSchema: z.object({
+        draftId: identifier.describe("想法 ID")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ draftId }) => {
+      try {
+        const draft = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/drafts/${encodeURIComponent(draftId)}`
+        );
+        return result("Scriverse 想法详情：", draft, { draft });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }
