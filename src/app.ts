@@ -3184,11 +3184,18 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       : store.listCharacterProfileSections(request.params.characterId));
   });
   app.post("/api/characters/:characterId/sections", (request, response) => {
-    const section = store.createCharacterProfileSection(
-      request.params.characterId,
-      parse(characterProfileSectionSchema, request.body)
+    const character = store.getCharacter(request.params.characterId);
+    const input = parse(characterProfileSectionSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      String(character.workId),
+      "character-section.create",
+      input,
+      () => store.createCharacterProfileSection(request.params.characterId, input),
+      201,
+      () => store.findCharacterSectionDuplicateCandidates(request.params.characterId, input.title)
     );
-    data(response, section, 201);
   });
   app.get("/api/character-sections/:sectionId", (request, response) => {
     data(response, store.getCharacterProfileSection(request.params.sectionId));

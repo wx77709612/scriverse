@@ -272,6 +272,44 @@ describe("MCP 写入幂等契约", () => {
     )).toEqual({ action: "character.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建角色扩展资料并在同角色章节重名时返回候选", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_character_section");
+    const character = runtime.store.createCharacter(fixture.workId, { name: "沈砚" });
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const payload = { sectionType: "background", title: "灰烬航标事故", contentMarkdown: "她是唯一的幸存者。" };
+    const created = await request(runtime.app).post(`/api/characters/${character.id}/sections`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-character-section-0001")
+      .send(payload)
+      .expect(201);
+    const replayed = await request(runtime.app).post(`/api/characters/${character.id}/sections`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-character-section-0001")
+      .send(payload)
+      .expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/characters/${character.id}/sections`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-character-section-0002")
+      .send({ ...payload, contentMarkdown: "另一份描述。" })
+      .expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "character-section", title: payload.title, versionNo: 1 })] }
+    });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM character_profile_section_versions WHERE section_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get(
+      "SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'character-section.created'",
+      created.body.data.id
+    )).toEqual({ action: "character-section.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

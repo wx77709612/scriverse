@@ -7437,6 +7437,28 @@ export class Store {
     ).map((row) => this.mapCharacterProfileSection(row));
   }
 
+  findCharacterSectionDuplicateCandidates(characterId: string, title: string): Record<string, unknown>[] {
+    const character = this.getCharacter(characterId);
+    return this.db.all(
+      `SELECT id, work_id, character_id, section_type, title, version_no
+       FROM character_profile_sections
+       WHERE character_id = ? AND lower(trim(title)) = lower(trim(?))
+       ORDER BY updated_at DESC, id
+       LIMIT 20`,
+      characterId,
+      title
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "character-section",
+      characterId: requiredString(row, "character_id"),
+      characterName: String(character.name),
+      sectionType: requiredString(row, "section_type"),
+      title: requiredString(row, "title"),
+      versionNo: numberValue(row, "version_no")
+    }));
+  }
+
   listCharacterProfileSectionsPage(characterId: string, pagination: Pagination): PaginatedResult<Record<string, unknown>> {
     this.getCharacter(characterId);
     const page = paginationSql(pagination);

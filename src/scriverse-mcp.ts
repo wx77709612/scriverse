@@ -1123,5 +1123,48 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_character_section",
+    {
+      title: "创建 Scriverse 角色扩展资料",
+      description: "为已有角色创建正式扩展资料章节，例如背景、外貌、能力、性格或历史。重名时返回候选，不会覆盖已有章节。",
+      inputSchema: z.object({
+        characterId: identifier.describe("角色 ID"),
+        sectionType: z.enum(["overview", "appearance", "abilities", "personality", "ecology", "background", "history", "legends", "research", "notes", "custom"]).optional(),
+        title: z.string().trim().min(1).max(200).describe("资料章节标题"),
+        contentMarkdown: z.string().max(500_000).optional().describe("资料正文，支持 Markdown"),
+        summary: z.string().max(20_000).optional().describe("资料摘要"),
+        sortOrder: z.number().int().min(0).max(100_000).optional().describe("排序序号"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ characterId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const characterSection = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/characters/${encodeURIComponent(characterId)}/sections`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        const sectionRecord = characterSection && typeof characterSection === "object" && !Array.isArray(characterSection)
+          ? characterSection as Record<string, unknown>
+          : null;
+        const creation = creationSummary(characterSection, {
+          workId: typeof sectionRecord?.workId === "string" ? sectionRecord.workId : "",
+          entityType: "character-section",
+          module: "characters",
+          title: input.title,
+          relatedEntityIds: { characterId }
+        });
+        return result("已创建 Scriverse 角色扩展资料：", creation, { characterSection, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
