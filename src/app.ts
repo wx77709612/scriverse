@@ -3003,8 +3003,17 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     data(response, pagination ? store.listSettingsPage(request.params.workId, pagination, includeContent) : store.listSettings(request.params.workId, includeContent));
   });
   app.post("/api/works/:workId/settings", (request, response) => {
-    const setting = store.createSetting(request.params.workId, parse(settingSchema, request.body));
-    data(response, setting, 201);
+    const input = parse(settingSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "setting.create",
+      input,
+      () => store.createSetting(request.params.workId, input),
+      201,
+      () => store.findSettingDuplicateCandidates(request.params.workId, input.title)
+    );
   });
   app.get("/api/works/:workId/settings/context", (request, response) => data(response, store.listSettings(request.params.workId, true)));
   app.get("/api/settings/:settingId", (request, response) => data(response, store.getSetting(request.params.settingId)));

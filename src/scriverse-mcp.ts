@@ -35,6 +35,11 @@ class ScriverseMcpToolError extends Error {
 }
 
 const identifier = z.string().trim().min(1).max(200);
+const idempotencyKey = z.string().trim().min(16).max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u)
+  .describe("幂等键；同一用户、作品和工具重试时必须复用该值");
+const allowDuplicate = z.boolean().optional().default(false)
+  .describe("仅在已经检查候选且确认要保留重名记录时设为 true");
 
 function normalizeBaseUrl(value: string): string {
   let url: URL;
@@ -1001,12 +1006,8 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
         settingModule: z.enum(DRAFT_SETTING_MODULES).nullable().optional().describe("设定库类想法可关联的模块"),
         title: z.string().trim().min(1).max(200).describe("想法标题"),
         content: z.string().max(200_000).describe("想法内容，支持 Markdown"),
-        idempotencyKey: z.string().trim().min(16).max(128)
-          .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u)
-          .optional()
-          .describe("可选幂等键；同一用户、作品和工具重试时复用该值"),
-        allowDuplicate: z.boolean().optional().default(false)
-          .describe("仅在已经检查候选且确认要保留重名记录时设为 true")
+        idempotencyKey: idempotencyKey.optional(),
+        allowDuplicate
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     },
@@ -1030,6 +1031,46 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
           }
         });
         return result("已创建 Scriverse 想法：", creation, { draft, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_setting",
+    {
+      title: "创建 Scriverse 正式设定",
+      description: "把世界观内容写入作品的正式设定模块。若返回重名候选，请先决定更新已有记录，或设置 allowDuplicate 后继续新增。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        title: z.string().trim().min(1).max(200).describe("设定标题"),
+        category: z.string().trim().min(1).max(100).describe("设定分类"),
+        content: z.string().trim().min(1).max(200_000).describe("设定正文，支持 Markdown"),
+        tags: z.array(z.string().trim().min(1).max(100)).max(50).optional().describe("设定标签"),
+        status: z.enum(["draft", "pending", "confirmed", "deprecated"]).optional().describe("设定状态"),
+        authorNote: z.string().max(20_000).optional().describe("作者备注"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const setting = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/settings`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        const creation = creationSummary(setting, {
+          workId,
+          entityType: "setting",
+          module: "settings",
+          title: input.title
+        });
+        return result("已创建 Scriverse 正式设定：", creation, { setting, creation });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

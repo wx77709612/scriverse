@@ -548,6 +548,11 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/settings") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "setting-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -630,7 +635,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_foreshadow",
       "get_writing_goal",
       "search_work_entities",
-      "create_draft"
+      "create_draft",
+      "create_setting"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1492,6 +1498,60 @@ describe("Scriverse MCP Bridge", () => {
     expect(created.isError).not.toBe(true);
     expect(created.structuredContent).toMatchObject({ creation: { success: true, entityId: "draft-2" } });
     expect(fixture.requests.map((entry) => entry.duplicatePolicy)).toEqual([undefined, "create"]);
+  });
+
+  it("把世界观内容创建为正式设定并返回统一创建结果", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const created = await client.callTool({
+      name: "create_setting",
+      arguments: {
+        workId: "work-1",
+        title: "灰烬航标",
+        category: "科技",
+        content: "以恒星灰烬校准的远航信标。",
+        tags: ["航行", "科技"],
+        status: "confirmed",
+        idempotencyKey: "setting-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      setting: {
+        id: "setting-2",
+        workId: "work-1",
+        versionNo: 1,
+        title: "灰烬航标",
+        category: "科技",
+        content: "以恒星灰烬校准的远航信标。",
+        tags: ["航行", "科技"],
+        status: "confirmed"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "setting",
+        entityId: "setting-2",
+        title: "灰烬航标",
+        versionNo: 1,
+        module: "settings",
+        relatedEntityIds: {}
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "POST",
+      url: "/api/works/work-1/settings",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "setting-create-0001",
+      body: {
+        title: "灰烬航标",
+        category: "科技",
+        content: "以恒星灰烬校准的远航信标。",
+        tags: ["航行", "科技"],
+        status: "confirmed"
+      }
+    });
   });
 
   it("要求通过环境变量提供 Scriverse API Key", () => {

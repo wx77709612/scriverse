@@ -6427,6 +6427,25 @@ export class Store {
     return this.db.all(`SELECT setting.*, ${preferences.columns} FROM settings setting WHERE setting.work_id = ? ORDER BY ${preferences.orderBy}, setting.locked DESC, setting.category, setting.title`, ...preferences.params, workId).map((row) => this.mapSetting(row, includeContent));
   }
 
+  findSettingDuplicateCandidates(workId: string, title: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    return this.db.all(
+      `SELECT id, work_id, title, category FROM settings
+       WHERE work_id = ? AND lower(trim(title)) = lower(trim(?))
+       ORDER BY updated_at DESC, id
+       LIMIT 20`,
+      workId,
+      title
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "setting",
+      title: requiredString(row, "title"),
+      category: requiredString(row, "category"),
+      versionNo: this.currentEntityVersionNo("setting", requiredString(row, "id"))
+    }));
+  }
+
   listSettingsPage(workId: string, pagination: Pagination, includeContent = true): PaginatedResult<Record<string, unknown>> {
     this.getWork(workId);
     const preferences = this.entityPreferenceProjection("setting", "setting");

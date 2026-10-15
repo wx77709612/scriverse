@@ -195,6 +195,44 @@ describe("MCP 写入幂等契约", () => {
     expect(runtime.database.get("SELECT COUNT(*) AS count FROM drafts WHERE work_id = ? AND title = ?", fixture.workId, payload.title)).toEqual({ count: 2 });
   });
 
+  it("幂等创建正式设定并在重名时返回候选，同时保留版本与审计", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_setting");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const payload = { title: "灰烬航标", category: "科技", content: "以恒星灰烬校准。", tags: ["航行"] };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/settings`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-setting-create-0001")
+      .send(payload)
+      .expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/settings`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-setting-create-0001")
+      .send(payload)
+      .expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+    expect(replayed.headers["idempotency-replayed"]).toBe("true");
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/settings`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-setting-create-0002")
+      .send({ ...payload, content: "另一种解释。" })
+      .expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "setting", title: payload.title, versionNo: 1 })] }
+    });
+    expect(runtime.database.get(
+      "SELECT COUNT(*) AS count FROM entity_versions WHERE entity_type = 'setting' AND entity_id = ?",
+      created.body.data.id
+    )).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'setting.created'",
+      created.body.data.id
+    )).toEqual({ action: "setting.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);
