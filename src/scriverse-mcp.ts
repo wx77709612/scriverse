@@ -624,6 +624,90 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_timeline_tracks",
+    {
+      title: "列出 Scriverse 时间轴轨道",
+      description: "分页列出指定作品的时间轴轨道摘要。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的轨道数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, page, limit }) => {
+      try {
+        const tracks = await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/timeline-tracks`, {
+          query: { page, limit }
+        });
+        return result("Scriverse 时间轴轨道：", tracks, { tracks });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_timeline_track",
+    {
+      title: "读取 Scriverse 时间轴轨道",
+      description: "按轨道 ID 读取时间轴轨道详情和版本信息。",
+      inputSchema: z.object({ trackId: identifier.describe("时间轴轨道 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ trackId }) => {
+      try {
+        const track = await requestScriverse(fetchImpl, config, `/api/timeline-tracks/${encodeURIComponent(trackId)}`);
+        return result("Scriverse 时间轴轨道详情：", track, { track });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_timeline_events",
+    {
+      title: "列出 Scriverse 时间轴事件",
+      description: "分页列出指定作品的时间轴事件摘要。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的事件数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, page, limit }) => {
+      try {
+        const events = await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/timeline`, {
+          query: { page, limit }
+        });
+        return result("Scriverse 时间轴事件：", events, { events });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_timeline_event",
+    {
+      title: "读取 Scriverse 时间轴事件",
+      description: "按事件 ID 读取完整时间轴事件、关联轨道和参与角色以及版本信息。",
+      inputSchema: z.object({ eventId: identifier.describe("时间轴事件 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ eventId }) => {
+      try {
+        const event = await requestScriverse(fetchImpl, config, `/api/timeline/${encodeURIComponent(eventId)}`);
+        return result("Scriverse 时间轴事件详情：", event, { event });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",

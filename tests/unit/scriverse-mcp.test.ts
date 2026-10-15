@@ -319,6 +319,51 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/timeline-tracks?page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{ id: "track-1", workId: "work-1", name: "舰队纪年", color: "#4f46e5", versionNo: 2 }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/timeline-tracks/track-1") {
+        response.end(JSON.stringify({
+          data: { id: "track-1", workId: "work-1", name: "舰队纪年", description: "记录舰队迁徙节点。", color: "#4f46e5", versionNo: 2 }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/works/work-1/timeline?page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{ id: "event-1", workId: "work-1", trackId: "track-1", name: "灰烬跃迁", timeLabel: "新历 17 年", versionNo: 4 }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/timeline/event-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "event-1",
+            workId: "work-1",
+            trackId: "track-1",
+            name: "灰烬跃迁",
+            description: "舰队首次借助灰烬航标完成长距离跃迁。",
+            timeLabel: "新历 17 年",
+            participantIds: ["character-1"],
+            versionNo: 4
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -376,6 +421,10 @@ describe("Scriverse MCP Bridge", () => {
       "get_race",
       "list_organizations",
       "get_organization",
+      "list_timeline_tracks",
+      "get_timeline_track",
+      "list_timeline_events",
+      "get_timeline_event",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -851,6 +900,62 @@ describe("Scriverse MCP Bridge", () => {
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/organizations?includeContent=false&page=1&limit=20",
       "/api/organizations/organization-1"
+    ]);
+  });
+
+  it("分页读取时间轴轨道和事件并按 ID 获取详情", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const tracks = await client.callTool({
+      name: "list_timeline_tracks",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const track = await client.callTool({ name: "get_timeline_track", arguments: { trackId: "track-1" } });
+    const events = await client.callTool({
+      name: "list_timeline_events",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const event = await client.callTool({ name: "get_timeline_event", arguments: { eventId: "event-1" } });
+
+    expect(tracks.structuredContent).toEqual({
+      tracks: {
+        items: [{ id: "track-1", workId: "work-1", name: "舰队纪年", color: "#4f46e5", versionNo: 2 }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(track.structuredContent).toEqual({
+      track: { id: "track-1", workId: "work-1", name: "舰队纪年", description: "记录舰队迁徙节点。", color: "#4f46e5", versionNo: 2 }
+    });
+    expect(events.structuredContent).toEqual({
+      events: {
+        items: [{ id: "event-1", workId: "work-1", trackId: "track-1", name: "灰烬跃迁", timeLabel: "新历 17 年", versionNo: 4 }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(event.structuredContent).toEqual({
+      event: {
+        id: "event-1",
+        workId: "work-1",
+        trackId: "track-1",
+        name: "灰烬跃迁",
+        description: "舰队首次借助灰烬航标完成长距离跃迁。",
+        timeLabel: "新历 17 年",
+        participantIds: ["character-1"],
+        versionNo: 4
+      }
+    });
+    expect(fixture.requests.map((request) => request.url)).toEqual([
+      "/api/works/work-1/timeline-tracks?page=1&limit=20",
+      "/api/timeline-tracks/track-1",
+      "/api/works/work-1/timeline?page=1&limit=20",
+      "/api/timeline/event-1"
     ]);
   });
 
