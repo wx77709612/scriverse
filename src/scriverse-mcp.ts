@@ -522,6 +522,57 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_races",
+    {
+      title: "列出 Scriverse 种族",
+      description: "分页列出指定作品的正式种族摘要，不返回种族的完整 Markdown 资料。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的种族摘要数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, page, limit }) => {
+      try {
+        const races = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/races`,
+          { query: { includeContent: false, page, limit } }
+        );
+        return result("Scriverse 种族摘要：", races, { races });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_race",
+    {
+      title: "读取 Scriverse 种族",
+      description: "按种族 ID 读取完整种族资料、层级关联和版本信息。",
+      inputSchema: z.object({
+        raceId: identifier.describe("种族 ID")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ raceId }) => {
+      try {
+        const race = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/races/${encodeURIComponent(raceId)}`
+        );
+        return result("Scriverse 种族详情：", race, { race });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",

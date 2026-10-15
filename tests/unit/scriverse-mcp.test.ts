@@ -252,6 +252,39 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/races?includeContent=false&page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "race-1",
+              workId: "work-1",
+              name: "星痕人",
+              summary: "皮肤会记录经过的恒星光谱。",
+              parentRaceId: null,
+              versionNo: 3
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/races/race-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "race-1",
+            workId: "work-1",
+            name: "星痕人",
+            summary: "皮肤会记录经过的恒星光谱。",
+            settingsMarkdown: "## 生理特征\n\n星痕会随年龄逐渐褪色。",
+            parentRaceId: null,
+            versionNo: 3
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -305,6 +338,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_character",
       "list_character_sections",
       "get_character_section",
+      "list_races",
+      "get_race",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -685,6 +720,53 @@ describe("Scriverse MCP Bridge", () => {
       "/api/characters/character-1",
       "/api/characters/character-1/sections?page=1&limit=20",
       "/api/character-sections/section-1"
+    ]);
+  });
+
+  it("分页读取种族摘要并按 ID 读取完整种族资料", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const races = await client.callTool({
+      name: "list_races",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const race = await client.callTool({
+      name: "get_race",
+      arguments: { raceId: "race-1" }
+    });
+
+    expect(races.structuredContent).toEqual({
+      races: {
+        items: [{
+          id: "race-1",
+          workId: "work-1",
+          name: "星痕人",
+          summary: "皮肤会记录经过的恒星光谱。",
+          parentRaceId: null,
+          versionNo: 3
+        }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(JSON.stringify(races.structuredContent)).not.toContain("生理特征");
+    expect(race.structuredContent).toEqual({
+      race: {
+        id: "race-1",
+        workId: "work-1",
+        name: "星痕人",
+        summary: "皮肤会记录经过的恒星光谱。",
+        settingsMarkdown: "## 生理特征\n\n星痕会随年龄逐渐褪色。",
+        parentRaceId: null,
+        versionNo: 3
+      }
+    });
+    expect(fixture.requests.map((request) => request.url)).toEqual([
+      "/api/works/work-1/races?includeContent=false&page=1&limit=20",
+      "/api/races/race-1"
     ]);
   });
 
