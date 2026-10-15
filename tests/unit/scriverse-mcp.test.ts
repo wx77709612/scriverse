@@ -186,6 +186,72 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/characters?includeSections=false&includeMerged=0&includeContent=false&page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "character-1",
+              workId: "work-1",
+              name: "沈砚",
+              role: "领航员",
+              versionNo: 5
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/characters/character-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "character-1",
+            workId: "work-1",
+            name: "沈砚",
+            role: "领航员",
+            summary: "能记住所有星图，却认不出自己的名字。",
+            raceId: "race-1",
+            organizationIds: ["organization-1"],
+            versionNo: 5
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/characters/character-1/sections?page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "section-1",
+              workId: "work-1",
+              characterId: "character-1",
+              title: "失忆前经历",
+              summary: "曾参与灰烬航标试验。",
+              versionNo: 2
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/character-sections/section-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "section-1",
+            workId: "work-1",
+            characterId: "character-1",
+            title: "失忆前经历",
+            summary: "曾参与灰烬航标试验。",
+            content: "沈砚是第一批进入灰烬航标核心舱的领航员。",
+            versionNo: 2
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -235,6 +301,10 @@ describe("Scriverse MCP Bridge", () => {
       "get_draft",
       "list_settings",
       "get_setting",
+      "list_characters",
+      "get_character",
+      "list_character_sections",
+      "get_character_section",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -538,6 +608,83 @@ describe("Scriverse MCP Bridge", () => {
         body: null
       },
       { method: "GET", url: "/api/settings/setting-1", authorization: "Bearer scrv_test-secret", body: null }
+    ]);
+  });
+
+  it("分页读取角色摘要、角色详情和角色扩展资料", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const characters = await client.callTool({
+      name: "list_characters",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const character = await client.callTool({
+      name: "get_character",
+      arguments: { characterId: "character-1" }
+    });
+    const sections = await client.callTool({
+      name: "list_character_sections",
+      arguments: { characterId: "character-1", page: 1, limit: 20 }
+    });
+    const section = await client.callTool({
+      name: "get_character_section",
+      arguments: { sectionId: "section-1" }
+    });
+
+    expect(characters.structuredContent).toEqual({
+      characters: {
+        items: [{ id: "character-1", workId: "work-1", name: "沈砚", role: "领航员", versionNo: 5 }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(character.structuredContent).toEqual({
+      character: {
+        id: "character-1",
+        workId: "work-1",
+        name: "沈砚",
+        role: "领航员",
+        summary: "能记住所有星图，却认不出自己的名字。",
+        raceId: "race-1",
+        organizationIds: ["organization-1"],
+        versionNo: 5
+      }
+    });
+    expect(sections.structuredContent).toEqual({
+      sections: {
+        items: [{
+          id: "section-1",
+          workId: "work-1",
+          characterId: "character-1",
+          title: "失忆前经历",
+          summary: "曾参与灰烬航标试验。",
+          versionNo: 2
+        }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(section.structuredContent).toEqual({
+      section: {
+        id: "section-1",
+        workId: "work-1",
+        characterId: "character-1",
+        title: "失忆前经历",
+        summary: "曾参与灰烬航标试验。",
+        content: "沈砚是第一批进入灰烬航标核心舱的领航员。",
+        versionNo: 2
+      }
+    });
+    expect(fixture.requests.map((request) => request.url)).toEqual([
+      "/api/works/work-1/characters?includeSections=false&includeMerged=0&includeContent=false&page=1&limit=20",
+      "/api/characters/character-1",
+      "/api/characters/character-1/sections?page=1&limit=20",
+      "/api/character-sections/section-1"
     ]);
   });
 

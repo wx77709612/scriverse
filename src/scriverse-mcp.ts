@@ -420,6 +420,108 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_characters",
+    {
+      title: "列出 Scriverse 角色",
+      description: "分页列出指定作品的正式角色摘要，不展开角色扩展资料或种族长内容。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的角色摘要数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, page, limit }) => {
+      try {
+        const characters = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/characters`,
+          { query: { includeSections: false, includeMerged: 0, includeContent: false, page, limit } }
+        );
+        return result("Scriverse 角色摘要：", characters, { characters });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_character",
+    {
+      title: "读取 Scriverse 角色",
+      description: "按角色 ID 读取正式角色详情、关联种族和组织以及版本信息。",
+      inputSchema: z.object({
+        characterId: identifier.describe("角色 ID")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ characterId }) => {
+      try {
+        const character = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/characters/${encodeURIComponent(characterId)}`
+        );
+        return result("Scriverse 角色详情：", character, { character });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_character_sections",
+    {
+      title: "列出 Scriverse 角色扩展资料",
+      description: "分页列出指定角色的扩展资料摘要，完整 Markdown 内容需再按扩展资料 ID 读取。",
+      inputSchema: z.object({
+        characterId: identifier.describe("角色 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的扩展资料摘要数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ characterId, page, limit }) => {
+      try {
+        const sections = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/characters/${encodeURIComponent(characterId)}/sections`,
+          { query: { page, limit } }
+        );
+        return result("Scriverse 角色扩展资料摘要：", sections, { sections });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_character_section",
+    {
+      title: "读取 Scriverse 角色扩展资料",
+      description: "按扩展资料 ID 读取完整 Markdown 内容、所属角色和版本信息。",
+      inputSchema: z.object({
+        sectionId: identifier.describe("角色扩展资料 ID")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ sectionId }) => {
+      try {
+        const section = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/character-sections/${encodeURIComponent(sectionId)}`
+        );
+        return result("Scriverse 角色扩展资料详情：", section, { section });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",
