@@ -461,6 +461,57 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/foreshadows?status=unresolved&currentChapterId=chapter-26&page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "foreshadow-1",
+              workId: "work-1",
+              title: "停摆的航海钟",
+              description: "这段完整伏笔描述只应通过详情工具读取。",
+              status: "planted",
+              importance: "high",
+              plannedPayoffChapterId: "chapter-26",
+              unresolved: true,
+              overdue: false,
+              occurrences: [{ id: "occurrence-1", chapterId: "chapter-1", note: "钟针停在归航坐标。" }],
+              versionNo: 4
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/foreshadows/foreshadow-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "foreshadow-1",
+            workId: "work-1",
+            title: "停摆的航海钟",
+            description: "航海钟在每次接近伪造星图时都会停摆。",
+            status: "planted",
+            importance: "high",
+            plannedPayoffChapterId: "chapter-26",
+            resolutionNote: "",
+            unresolved: true,
+            overdue: false,
+            occurrences: [{
+              id: "occurrence-1",
+              foreshadowId: "foreshadow-1",
+              chapterId: "chapter-1",
+              chapterTitle: "第一章 信号",
+              role: "plant",
+              note: "钟针停在归航坐标。",
+              versionNo: 1
+            }],
+            versionNo: 4
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -526,6 +577,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_relationship",
       "list_chapter_outlines",
       "get_chapter_outline",
+      "list_foreshadows",
+      "get_foreshadow",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -1167,6 +1220,77 @@ describe("Scriverse MCP Bridge", () => {
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/outlines?page=1&limit=20",
       "/api/chapters/chapter-26/outline"
+    ]);
+  });
+
+  it("分页读取伏笔摘要并在详情中返回章节出现位置", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const foreshadows = await client.callTool({
+      name: "list_foreshadows",
+      arguments: {
+        workId: "work-1",
+        status: "unresolved",
+        currentChapterId: "chapter-26",
+        page: 1,
+        limit: 20
+      }
+    });
+    const foreshadow = await client.callTool({
+      name: "get_foreshadow",
+      arguments: { foreshadowId: "foreshadow-1" }
+    });
+
+    expect(foreshadows.structuredContent).toEqual({
+      foreshadows: {
+        items: [{
+          id: "foreshadow-1",
+          workId: "work-1",
+          title: "停摆的航海钟",
+          status: "planted",
+          importance: "high",
+          plannedPayoffChapterId: "chapter-26",
+          unresolved: true,
+          overdue: false,
+          occurrenceCount: 1,
+          versionNo: 4
+        }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(JSON.stringify(foreshadows.structuredContent)).not.toContain("完整伏笔描述");
+    expect(JSON.stringify(foreshadows.structuredContent)).not.toContain("钟针停在归航坐标");
+    expect(foreshadow.structuredContent).toEqual({
+      foreshadow: {
+        id: "foreshadow-1",
+        workId: "work-1",
+        title: "停摆的航海钟",
+        description: "航海钟在每次接近伪造星图时都会停摆。",
+        status: "planted",
+        importance: "high",
+        plannedPayoffChapterId: "chapter-26",
+        resolutionNote: "",
+        unresolved: true,
+        overdue: false,
+        occurrences: [{
+          id: "occurrence-1",
+          foreshadowId: "foreshadow-1",
+          chapterId: "chapter-1",
+          chapterTitle: "第一章 信号",
+          role: "plant",
+          note: "钟针停在归航坐标。",
+          versionNo: 1
+        }],
+        versionNo: 4
+      }
+    });
+    expect(fixture.requests.map((request) => request.url)).toEqual([
+      "/api/works/work-1/foreshadows?status=unresolved&currentChapterId=chapter-26&page=1&limit=20",
+      "/api/foreshadows/foreshadow-1"
     ]);
   });
 

@@ -99,15 +99,22 @@ function selectSummaryFields(value: unknown, fields: readonly string[]): Record<
   return Object.fromEntries(fields.flatMap((field) => field in record ? [[field, record[field]]] : []));
 }
 
-function summarizeList(value: unknown, fields: readonly string[]): unknown {
-  if (Array.isArray(value)) return value.map((item) => selectSummaryFields(item, fields));
+function mapListItems(
+  value: unknown,
+  mapper: (item: unknown) => Record<string, unknown>
+): unknown {
+  if (Array.isArray(value)) return value.map(mapper);
   if (!value || typeof value !== "object") throw new Error("Scriverse 列表响应格式无效");
   const record = value as Record<string, unknown>;
   if (!Array.isArray(record.items)) throw new Error("Scriverse 分页列表响应缺少 items 字段");
   return {
     ...record,
-    items: record.items.map((item) => selectSummaryFields(item, fields))
+    items: record.items.map(mapper)
   };
+}
+
+function summarizeList(value: unknown, fields: readonly string[]): unknown {
+  return mapListItems(value, (item) => selectSummaryFields(item, fields));
 }
 
 async function requestScriverse(
@@ -822,6 +829,63 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
       try {
         const outline = await requestScriverse(fetchImpl, config, `/api/chapters/${encodeURIComponent(chapterId)}/outline`);
         return result("Scriverse 章节大纲详情：", outline, { outline });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_foreshadows",
+    {
+      title: "列出 Scriverse 伏笔",
+      description: "分页列出指定作品的伏笔摘要和出现次数；完整描述与章节出现位置需调用 get_foreshadow。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        status: z.enum(["all", "unresolved", "resolved"]).default("all").describe("伏笔状态筛选"),
+        currentChapterId: identifier.optional().describe("可选当前章节 ID，用于判断伏笔是否逾期"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的伏笔摘要数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, status, currentChapterId, page, limit }) => {
+      try {
+        const rawForeshadows = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/foreshadows`,
+          { query: { status, currentChapterId, page, limit } }
+        );
+        const foreshadows = mapListItems(rawForeshadows, (item) => {
+          const summary = selectSummaryFields(item, [
+            "id", "workId", "title", "status", "importance", "plannedPayoffChapterId",
+            "unresolved", "overdue", "versionNo", "createdAt", "updatedAt"
+          ]);
+          const occurrences = item && typeof item === "object"
+            ? (item as Record<string, unknown>).occurrences
+            : undefined;
+          return { ...summary, occurrenceCount: Array.isArray(occurrences) ? occurrences.length : 0 };
+        });
+        return result("Scriverse 伏笔摘要：", foreshadows, { foreshadows });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_foreshadow",
+    {
+      title: "读取 Scriverse 伏笔",
+      description: "按伏笔 ID 读取完整描述、状态、计划回收章节、版本和全部章节出现位置。",
+      inputSchema: z.object({ foreshadowId: identifier.describe("伏笔 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ foreshadowId }) => {
+      try {
+        const foreshadow = await requestScriverse(fetchImpl, config, `/api/foreshadows/${encodeURIComponent(foreshadowId)}`);
+        return result("Scriverse 伏笔详情：", foreshadow, { foreshadow });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }
