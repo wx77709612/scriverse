@@ -1577,6 +1577,30 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     ? auth.listUsers().find((user) => user.status === "active") ?? null
     : null;
   const store = new Store(database);
+  const idempotentCreate = <T>(
+    request: Request,
+    response: Response,
+    workId: string,
+    operationName: string,
+    input: unknown,
+    create: () => T,
+    status = 201
+  ): void => {
+    const providedKey = request.get("Idempotency-Key");
+    if (providedKey === undefined) {
+      data(response, create(), status);
+      return;
+    }
+    const idempotencyKey = parse(idempotencyKeySchema, providedKey);
+    const result = store.executeIdempotentMutation({
+      workId,
+      operation: operationName,
+      idempotencyKey,
+      requestHash: store.hashContent(JSON.stringify(input))
+    }, create);
+    response.setHeader("Idempotency-Replayed", result.replayed ? "true" : "false");
+    data(response, result.value, status);
+  };
   const im = new ImService(store, auth);
   const offlineSync = new OfflineSyncService(database, store);
   const platformAiSettings = store.getPlatformAiSettings();
@@ -2921,7 +2945,15 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       : store.listDrafts(request.params.workId, query.draftType, includeContent));
   });
   app.post("/api/works/:workId/drafts", (request, response) => {
-    data(response, store.createDraft(request.params.workId, parse(draftSchema, request.body)), 201);
+    const input = parse(draftSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "draft.create",
+      input,
+      () => store.createDraft(request.params.workId, input)
+    );
   });
   app.get("/api/drafts/:draftId", (request, response) => data(response, store.getDraft(request.params.draftId)));
   app.patch("/api/drafts/:draftId/favorite", (request, response) => {

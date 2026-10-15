@@ -9,6 +9,7 @@ type RecordedRequest = {
   url: string;
   authorization: string | undefined;
   body: unknown;
+  idempotencyKey?: string;
 };
 
 const openClients: Client[] = [];
@@ -33,7 +34,10 @@ async function startScriverseFixture(options: {
         method: request.method ?? "",
         url: request.url ?? "",
         authorization: request.headers.authorization,
-        body
+        body,
+        ...(typeof request.headers["idempotency-key"] === "string"
+          ? { idempotencyKey: request.headers["idempotency-key"] }
+          : {})
       });
       response.setHeader("Content-Type", "application/json");
       if (request.method === "GET" && request.url === "/api/works") {
@@ -629,7 +633,7 @@ describe("Scriverse MCP Bridge", () => {
     expect(result.tools.find((tool) => tool.name === "create_draft")?.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: false,
+      idempotentHint: true,
       openWorldHint: false
     });
   });
@@ -1401,7 +1405,8 @@ describe("Scriverse MCP Bridge", () => {
         draftType: "setting",
         settingModule: "characters",
         title: "失忆的领航员",
-        content: "她能记住所有星图，却认不出自己的名字。"
+        content: "她能记住所有星图，却认不出自己的名字。",
+        idempotencyKey: "draft-setting-idea-0001"
       }
     });
 
@@ -1418,6 +1423,7 @@ describe("Scriverse MCP Bridge", () => {
       method: "POST",
       url: "/api/works/work-1/drafts",
       authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "draft-setting-idea-0001",
       body: {
         draftType: "setting",
         settingModule: "characters",

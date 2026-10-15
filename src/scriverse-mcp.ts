@@ -126,6 +126,7 @@ async function requestScriverse(
     method?: "GET" | "POST";
     query?: Record<string, string | number | boolean | undefined>;
     body?: Record<string, unknown>;
+    idempotencyKey?: string;
   } = {}
 ): Promise<unknown> {
   let response: Response;
@@ -139,7 +140,8 @@ async function requestScriverse(
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${config.apiKey}`,
-        ...(options.body ? { "Content-Type": "application/json" } : {})
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {})
       },
       ...(options.body ? { body: JSON.stringify(options.body) } : {})
     });
@@ -959,18 +961,22 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
         volumeId: identifier.nullable().optional().describe("正文类想法可关联的分卷 ID"),
         settingModule: z.enum(DRAFT_SETTING_MODULES).nullable().optional().describe("设定库类想法可关联的模块"),
         title: z.string().trim().min(1).max(200).describe("想法标题"),
-        content: z.string().max(200_000).describe("想法内容，支持 Markdown")
+        content: z.string().max(200_000).describe("想法内容，支持 Markdown"),
+        idempotencyKey: z.string().trim().min(16).max(128)
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u)
+          .optional()
+          .describe("可选幂等键；同一用户、作品和工具重试时复用该值")
       }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     },
-    async ({ workId, ...input }) => {
+    async ({ workId, idempotencyKey, ...input }) => {
       try {
         const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
         const draft = await requestScriverse(
           fetchImpl,
           config,
           `/api/works/${encodeURIComponent(workId)}/drafts`,
-          { method: "POST", body }
+          { method: "POST", body, idempotencyKey }
         );
         return result("已创建 Scriverse 想法：", draft, { draft });
       } catch (error) {

@@ -11152,6 +11152,58 @@ export class Store {
     return createHash("sha256").update(content).digest("hex");
   }
 
+  executeIdempotentMutation<T>(
+    input: {
+      workId: string;
+      operation: string;
+      idempotencyKey: string;
+      requestHash: string;
+    },
+    operation: () => T
+  ): { value: T; replayed: boolean } {
+    const actor = currentRequestActor();
+    if (!actor) throw new AppError(401, "AUTH_REQUIRED", "请先登录");
+    return this.db.transaction(() => {
+      const existing = this.db.get<{ request_hash: string; response_json: string }>(
+        `SELECT request_hash, response_json FROM api_idempotency_records
+         WHERE user_id = ? AND work_id = ? AND operation = ? AND idempotency_key = ?`,
+        actor.userId,
+        input.workId,
+        input.operation,
+        input.idempotencyKey
+      );
+      if (existing) {
+        if (existing.request_hash !== input.requestHash) {
+          throw new AppError(409, "IDEMPOTENCY_KEY_REUSED", "该幂等键已经用于不同的请求内容");
+        }
+        try {
+          return { value: JSON.parse(existing.response_json) as T, replayed: true };
+        } catch {
+          throw new AppError(500, "IDEMPOTENCY_RESULT_INVALID", "已保存的幂等结果无法读取");
+        }
+      }
+
+      const value = operation();
+      const responseJson = JSON.stringify(value);
+      if (responseJson === undefined) {
+        throw new AppError(500, "IDEMPOTENCY_RESULT_INVALID", "创建结果无法保存为幂等记录");
+      }
+      this.db.run(
+        `INSERT INTO api_idempotency_records
+           (user_id, work_id, operation, idempotency_key, request_hash, response_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        actor.userId,
+        input.workId,
+        input.operation,
+        input.idempotencyKey,
+        input.requestHash,
+        responseJson,
+        now()
+      );
+      return { value, replayed: false };
+    });
+  }
+
   private relationshipRosterSourceVersions(workId: string): Record<string, number | string> {
     const versions: Record<string, number | string> = {};
     for (const row of this.db.all(
