@@ -573,6 +573,57 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_organizations",
+    {
+      title: "列出 Scriverse 组织",
+      description: "分页列出指定作品的正式组织摘要，不返回组织的完整 Markdown 资料。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的组织摘要数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, page, limit }) => {
+      try {
+        const organizations = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/organizations`,
+          { query: { includeContent: false, page, limit } }
+        );
+        return result("Scriverse 组织摘要：", organizations, { organizations });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_organization",
+    {
+      title: "读取 Scriverse 组织",
+      description: "按组织 ID 读取完整组织资料、成员关联和版本信息。",
+      inputSchema: z.object({
+        organizationId: identifier.describe("组织 ID")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ organizationId }) => {
+      try {
+        const organization = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/organizations/${encodeURIComponent(organizationId)}`
+        );
+        return result("Scriverse 组织详情：", organization, { organization });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",

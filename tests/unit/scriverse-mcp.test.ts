@@ -285,6 +285,40 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/organizations?includeContent=false&page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              id: "organization-1",
+              workId: "work-1",
+              name: "观星会",
+              type: "学术组织",
+              summary: "保存熄灭恒星的观测记录。",
+              versionNo: 6
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/organizations/organization-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "organization-1",
+            workId: "work-1",
+            name: "观星会",
+            type: "学术组织",
+            summary: "保存熄灭恒星的观测记录。",
+            settingsMarkdown: "## 章程\n\n每一次观测都必须由两名记录员交叉签名。",
+            memberIds: ["character-1"],
+            versionNo: 6
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -340,6 +374,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_character_section",
       "list_races",
       "get_race",
+      "list_organizations",
+      "get_organization",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -767,6 +803,54 @@ describe("Scriverse MCP Bridge", () => {
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/races?includeContent=false&page=1&limit=20",
       "/api/races/race-1"
+    ]);
+  });
+
+  it("分页读取组织摘要并按 ID 读取完整组织资料", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const organizations = await client.callTool({
+      name: "list_organizations",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const organization = await client.callTool({
+      name: "get_organization",
+      arguments: { organizationId: "organization-1" }
+    });
+
+    expect(organizations.structuredContent).toEqual({
+      organizations: {
+        items: [{
+          id: "organization-1",
+          workId: "work-1",
+          name: "观星会",
+          type: "学术组织",
+          summary: "保存熄灭恒星的观测记录。",
+          versionNo: 6
+        }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(JSON.stringify(organizations.structuredContent)).not.toContain("交叉签名");
+    expect(organization.structuredContent).toEqual({
+      organization: {
+        id: "organization-1",
+        workId: "work-1",
+        name: "观星会",
+        type: "学术组织",
+        summary: "保存熄灭恒星的观测记录。",
+        settingsMarkdown: "## 章程\n\n每一次观测都必须由两名记录员交叉签名。",
+        memberIds: ["character-1"],
+        versionNo: 6
+      }
+    });
+    expect(fixture.requests.map((request) => request.url)).toEqual([
+      "/api/works/work-1/organizations?includeContent=false&page=1&limit=20",
+      "/api/organizations/organization-1"
     ]);
   });
 
