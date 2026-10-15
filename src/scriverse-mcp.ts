@@ -758,6 +758,48 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_chapter_outlines",
+    {
+      title: "列出 Scriverse 章节大纲",
+      description: "分页列出指定作品的章节大纲摘要，包括状态和未解决伏笔数量。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        page: z.number().int().min(1).max(100_000).default(1).describe("页码"),
+        limit: z.number().int().min(1).max(100).default(50).describe("每页最多返回的章节大纲数")
+      }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, page, limit }) => {
+      try {
+        const outlines = await requestScriverse(fetchImpl, config, `/api/works/${encodeURIComponent(workId)}/outlines`, {
+          query: { page, limit }
+        });
+        return result("Scriverse 章节大纲摘要：", outlines, { outlines });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_chapter_outline",
+    {
+      title: "读取 Scriverse 章节大纲",
+      description: "按章节 ID 读取目标、冲突、转折、备注、状态和版本信息；尚无大纲时返回 null。",
+      inputSchema: z.object({ chapterId: identifier.describe("章节 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ chapterId }) => {
+      try {
+        const outline = await requestScriverse(fetchImpl, config, `/api/chapters/${encodeURIComponent(chapterId)}/outline`);
+        return result("Scriverse 章节大纲详情：", outline, { outline });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "create_draft",
     {
       title: "创建 Scriverse 想法",

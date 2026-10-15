@@ -402,6 +402,43 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "GET" && request.url === "/api/works/work-1/outlines?page=1&limit=20") {
+        response.end(JSON.stringify({
+          data: {
+            items: [{
+              chapterId: "chapter-26",
+              chapterTitle: "第二十六章 归航",
+              volumeId: "volume-1",
+              volumeTitle: "第一卷",
+              goal: "确认故乡坐标",
+              status: "ready",
+              unresolvedForeshadowCount: 2
+            }],
+            page: 1,
+            limit: 20,
+            hasMore: false,
+            nextPage: null
+          }
+        }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/chapters/chapter-26/outline") {
+        response.end(JSON.stringify({
+          data: {
+            chapterId: "chapter-26",
+            workId: "work-1",
+            chapterTitle: "第二十六章 归航",
+            volumeId: "volume-1",
+            goal: "确认故乡坐标",
+            conflict: "航标显示的恒星已经熄灭。",
+            turningPoint: "沈砚认出星图中的伪造标记。",
+            notes: "回收第一章的航海钟伏笔。",
+            status: "ready",
+            versionNo: 2
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         response.statusCode = 201;
         response.end(JSON.stringify({ data: { id: "draft-2", ...(body as object) } }));
@@ -465,6 +502,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_timeline_event",
       "list_relationships",
       "get_relationship",
+      "list_chapter_outlines",
+      "get_chapter_outline",
       "create_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
@@ -1047,6 +1086,56 @@ describe("Scriverse MCP Bridge", () => {
     expect(fixture.requests.map((request) => request.url)).toEqual([
       "/api/works/work-1/relationships?minimumConfidence=0&page=1&limit=20",
       "/api/relationships/relationship-1"
+    ]);
+  });
+
+  it("分页读取章节大纲摘要并按章节 ID 获取详情", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+
+    const outlines = await client.callTool({
+      name: "list_chapter_outlines",
+      arguments: { workId: "work-1", page: 1, limit: 20 }
+    });
+    const outline = await client.callTool({
+      name: "get_chapter_outline",
+      arguments: { chapterId: "chapter-26" }
+    });
+
+    expect(outlines.structuredContent).toEqual({
+      outlines: {
+        items: [{
+          chapterId: "chapter-26",
+          chapterTitle: "第二十六章 归航",
+          volumeId: "volume-1",
+          volumeTitle: "第一卷",
+          goal: "确认故乡坐标",
+          status: "ready",
+          unresolvedForeshadowCount: 2
+        }],
+        page: 1,
+        limit: 20,
+        hasMore: false,
+        nextPage: null
+      }
+    });
+    expect(outline.structuredContent).toEqual({
+      outline: {
+        chapterId: "chapter-26",
+        workId: "work-1",
+        chapterTitle: "第二十六章 归航",
+        volumeId: "volume-1",
+        goal: "确认故乡坐标",
+        conflict: "航标显示的恒星已经熄灭。",
+        turningPoint: "沈砚认出星图中的伪造标记。",
+        notes: "回收第一章的航海钟伏笔。",
+        status: "ready",
+        versionNo: 2
+      }
+    });
+    expect(fixture.requests.map((request) => request.url)).toEqual([
+      "/api/works/work-1/outlines?page=1&limit=20",
+      "/api/chapters/chapter-26/outline"
     ]);
   });
 
