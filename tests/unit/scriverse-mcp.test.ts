@@ -658,6 +658,25 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/foreshadows/foreshadow-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "foreshadow-1",
+            workId: "work-1",
+            title: "停摆的航海钟",
+            description: "航海钟指向被篡改的归航坐标。",
+            status: "resolved",
+            importance: "high",
+            plannedPayoffChapterId: "chapter-26",
+            resolutionNote: "沈砚用旧钟校正了真实坐标。",
+            unresolved: false,
+            overdue: false,
+            occurrences: [],
+            versionNo: 5
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/writing-progress") {
         response.end(JSON.stringify({
           data: {
@@ -957,7 +976,8 @@ describe("Scriverse MCP Bridge", () => {
       "update_organization",
       "update_timeline_event",
       "update_relationship",
-      "update_chapter_outline"
+      "update_chapter_outline",
+      "update_foreshadow"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -3036,6 +3056,51 @@ describe("Scriverse MCP Bridge", () => {
         status: "ready",
         changeNote: "补充返航冲突",
         expectedVersionNo: 1
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新正式伏笔", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_foreshadow",
+      arguments: {
+        foreshadowId: "foreshadow-1",
+        description: "航海钟指向被篡改的归航坐标。",
+        status: "resolved",
+        resolutionNote: "沈砚用旧钟校正了真实坐标。",
+        changeNote: "记录伏笔回收",
+        expectedVersionNo: 4
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      foreshadow: {
+        id: "foreshadow-1",
+        workId: "work-1",
+        title: "停摆的航海钟",
+        description: "航海钟指向被篡改的归航坐标。",
+        status: "resolved",
+        importance: "high",
+        plannedPayoffChapterId: "chapter-26",
+        resolutionNote: "沈砚用旧钟校正了真实坐标。",
+        unresolved: false,
+        overdue: false,
+        occurrences: [],
+        versionNo: 5
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/foreshadows/foreshadow-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        description: "航海钟指向被篡改的归航坐标。",
+        status: "resolved",
+        resolutionNote: "沈砚用旧钟校正了真实坐标。",
+        changeNote: "记录伏笔回收",
+        expectedVersionNo: 4
       }
     });
   });

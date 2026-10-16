@@ -385,4 +385,55 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'outline.updated'", chapterId))
       .toEqual({ action: "outline.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新伏笔并拒绝跨作品章节", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_foreshadow_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_foreshadow_outsider");
+    const localVolume = runWithRequestActor(owner.user, () => runtime.store.createVolume(owner.workId, { title: "第一卷" }));
+    const localChapter = runWithRequestActor(owner.user, () => runtime.store.createChapter(owner.workId, {
+      volumeId: String(localVolume.id),
+      title: "第三章 归航"
+    }));
+    const foreignVolume = runWithRequestActor(outsider.user, () => runtime.store.createVolume(outsider.workId, { title: "他作卷" }));
+    const foreignChapter = runWithRequestActor(outsider.user, () => runtime.store.createChapter(outsider.workId, {
+      volumeId: String(foreignVolume.id),
+      title: "他作章节"
+    }));
+    const foreshadow = runWithRequestActor(owner.user, () => runtime.store.createForeshadow(owner.workId, {
+      title: "停摆的航海钟",
+      plannedPayoffChapterId: String(localChapter.id)
+    }));
+    const foreshadowId = String(foreshadow.id);
+
+    await request(runtime.app).patch(`/api/foreshadows/${foreshadowId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ plannedPayoffChapterId: foreignChapter.id, expectedVersionNo: 1 }).expect(400);
+    await request(runtime.app).patch(`/api/foreshadows/${foreshadowId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ occurrences: [{ chapterId: foreignChapter.id, role: "payoff" }], expectedVersionNo: 1 }).expect(400);
+
+    const updated = await request(runtime.app).patch(`/api/foreshadows/${foreshadowId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ status: "resolved", resolutionNote: "沈砚用旧钟校正了真实坐标。", changeNote: "记录伏笔回收", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: foreshadowId, status: "resolved", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/foreshadows/${foreshadowId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ resolutionNote: "不得覆盖的新内容", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/foreshadows/${foreshadowId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ resolutionNote: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getForeshadow(foreshadowId)).toMatchObject({ status: "resolved", occurrences: [], versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'foreshadow' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      foreshadowId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'foreshadow.updated'", foreshadowId))
+      .toEqual({ action: "foreshadow.updated", user_id: owner.user.userId });
+  });
 });

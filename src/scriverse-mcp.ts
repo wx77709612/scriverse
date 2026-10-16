@@ -2200,5 +2200,55 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_foreshadow",
+    {
+      title: "安全更新 Scriverse 正式伏笔",
+      description: "使用当前版本号更新正式伏笔及完整出现位置列表；所有章节必须属于同一作品，版本冲突会被拒绝。",
+      inputSchema: z.object({
+        foreshadowId: identifier.describe("伏笔 ID"),
+        title: z.string().trim().min(1).max(300).optional().describe("伏笔标题"),
+        description: z.string().max(100_000).optional().describe("伏笔描述"),
+        status: z.enum(["planned", "planted", "resolved", "abandoned"]).optional().describe("伏笔状态"),
+        importance: z.enum(["low", "medium", "high"]).optional().describe("重要程度"),
+        plannedPayoffChapterId: identifier.nullable().optional().describe("同一作品内的计划回收章节 ID"),
+        resolutionNote: z.string().max(100_000).optional().describe("回收说明"),
+        occurrences: z.array(z.object({
+          chapterId: identifier.describe("同一作品内的章节 ID"),
+          role: z.enum(["setup", "reminder", "payoff"]),
+          note: z.string().max(100_000).optional(),
+          evidence: z.array(z.unknown()).max(100).optional()
+        }).strict()).max(500).optional().describe("替换后的完整出现位置列表"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.title,
+        value.description,
+        value.status,
+        value.importance,
+        value.plannedPayoffChapterId,
+        value.resolutionNote,
+        value.occurrences
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项伏笔内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ foreshadowId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const foreshadow = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/foreshadows/${encodeURIComponent(foreshadowId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 正式伏笔：", foreshadow, { foreshadow });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
