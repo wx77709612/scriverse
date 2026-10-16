@@ -1332,5 +1332,54 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_relationship",
+    {
+      title: "创建 Scriverse 正式人物关系",
+      description: "在作品的人物关系模块中创建正式关系。相同人物、类型和方向的关系会返回已有候选，不会覆盖已有记录。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        fromCharacterId: identifier.describe("同一作品内的起点角色 ID"),
+        toCharacterId: identifier.describe("同一作品内的终点角色 ID"),
+        category: z.enum(["family", "social", "emotional", "conflict", "uncertain"]).describe("关系类别"),
+        subtype: z.string().trim().max(100).optional().describe("关系子类型"),
+        keywords: z.array(z.string().trim().min(1).max(100)).max(30).optional().describe("关系关键词"),
+        directed: z.boolean().optional().describe("关系是否有方向"),
+        currentStatus: z.string().max(100).optional().describe("当前状态"),
+        timeRange: z.record(z.string().max(100), z.unknown()).refine((value) => Object.keys(value).length <= 50, "时间范围字段不能超过 50 项").optional(),
+        confidence: z.number().min(0).max(1).optional().describe("置信度"),
+        evidence: z.array(z.unknown()).max(100).optional().describe("结构化证据"),
+        confirmationStatus: z.enum(["pending", "confirmed", "rejected"]).optional().describe("确认状态"),
+        locked: z.boolean().optional().describe("是否锁定"),
+        idempotencyKey
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const relationship = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/relationships`,
+          { method: "POST", body, idempotencyKey }
+        );
+        const creation = creationSummary(relationship, {
+          workId,
+          entityType: "relationship",
+          module: "relationships",
+          title: `${input.fromCharacterId} ${input.directed ? "→" : "↔"} ${input.toCharacterId}`,
+          relatedEntityIds: {
+            fromCharacterId: input.fromCharacterId,
+            toCharacterId: input.toCharacterId
+          }
+        });
+        return result("已创建 Scriverse 正式人物关系：", creation, { relationship, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

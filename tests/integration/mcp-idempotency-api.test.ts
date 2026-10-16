@@ -446,6 +446,49 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "timeline.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建人物关系并拒绝重复关系和跨作品角色", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_relationship");
+    const other = await registerFixture(runtime, "idempotent_relationship_other");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const from = runWithRequestActor(fixture.user, () => runtime.store.createCharacter(fixture.workId, { name: "沈砚" }));
+    const to = runWithRequestActor(fixture.user, () => runtime.store.createCharacter(fixture.workId, { name: "林渡" }));
+    const foreign = runWithRequestActor(other.user, () => runtime.store.createCharacter(other.workId, { name: "他作角色" }));
+    const payload = {
+      fromCharacterId: from.id,
+      toCharacterId: to.id,
+      category: "social",
+      subtype: "导师",
+      directed: true,
+      confirmationStatus: "confirmed"
+    };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/relationships`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-relationship-create-0001").send(payload).expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/relationships`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-relationship-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/relationships`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-relationship-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "relationship", versionNo: 1 })] }
+    });
+    await request(runtime.app).post(`/api/works/${fixture.workId}/relationships`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-relationship-cross-work-0001")
+      .send({ ...payload, toCharacterId: foreign.id })
+      .expect(400);
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM relationships WHERE work_id = ?", fixture.workId)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'relationship' AND entity_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'relationship.created'", created.body.data.id))
+      .toEqual({ action: "relationship.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

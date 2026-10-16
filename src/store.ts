@@ -9377,6 +9377,39 @@ export class Store {
       .map((row) => this.mapRelationship(row));
   }
 
+  findRelationshipDuplicateCandidates(
+    workId: string,
+    fromCharacterId: string,
+    toCharacterId: string,
+    category: string,
+    subtype: string,
+    directed: boolean
+  ): Record<string, unknown>[] {
+    this.getWork(workId);
+    if (!directed && fromCharacterId.localeCompare(toCharacterId) > 0) {
+      [fromCharacterId, toCharacterId] = [toCharacterId, fromCharacterId];
+    }
+    const normalizedSubtype = subtype.normalize("NFKC").trim().toLocaleLowerCase("zh-CN");
+    return this.listRelationships(workId).filter((relationship) => (
+      relationship.fromCharacterId === fromCharacterId
+      && relationship.toCharacterId === toCharacterId
+      && Boolean(relationship.directed) === directed
+      && relationship.category === category
+      && String(relationship.subtype).normalize("NFKC").trim().toLocaleLowerCase("zh-CN") === normalizedSubtype
+      && relationship.confirmationStatus !== "rejected"
+    )).slice(0, 20).map((relationship) => ({
+      id: relationship.id,
+      workId: relationship.workId,
+      entityType: "relationship",
+      fromCharacterId: relationship.fromCharacterId,
+      toCharacterId: relationship.toCharacterId,
+      category: relationship.category,
+      subtype: relationship.subtype,
+      directed: relationship.directed,
+      versionNo: relationship.versionNo
+    }));
+  }
+
   listRelationshipsPage(workId: string, pagination: Pagination, minimumConfidence = 0): PaginatedResult<Record<string, unknown>> {
     this.getWork(workId);
     const page = paginationSql(pagination);

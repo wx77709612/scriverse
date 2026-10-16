@@ -3514,8 +3514,24 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       : store.listRelationships(request.params.workId, confidence));
   });
   app.post("/api/works/:workId/relationships", (request, response) => {
-    const relationship = store.createRelationship(request.params.workId, parse(relationshipSchema, request.body));
-    data(response, relationship, 201);
+    const input = parse(relationshipSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "relationship.create",
+      input,
+      () => store.createRelationship(request.params.workId, input),
+      201,
+      () => store.findRelationshipDuplicateCandidates(
+        request.params.workId,
+        input.fromCharacterId,
+        input.toCharacterId,
+        input.category,
+        input.subtype ?? "",
+        Boolean(input.directed)
+      )
+    );
   });
   app.get("/api/relationships/:relationshipId", (request, response) => data(response, store.getRelationship(request.params.relationshipId)));
   app.patch("/api/relationships/:relationshipId", (request, response) => {

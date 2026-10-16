@@ -585,6 +585,11 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "event-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/relationships") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "relationship-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -674,7 +679,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_race",
       "create_organization",
       "create_timeline_track",
-      "create_timeline_event"
+      "create_timeline_event",
+      "create_relationship"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1884,6 +1890,67 @@ describe("Scriverse MCP Bridge", () => {
         trackId: "track-1",
         chapterIds: ["chapter-26"],
         participantIds: ["character-1"]
+      })
+    });
+  });
+
+  it("创建正式人物关系并返回双方角色关联", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_relationship",
+      arguments: {
+        workId: "work-1",
+        fromCharacterId: "character-1",
+        toCharacterId: "character-2",
+        category: "social",
+        subtype: "导师",
+        keywords: ["舰队", "传承"],
+        directed: true,
+        confidence: 0.9,
+        confirmationStatus: "confirmed",
+        idempotencyKey: "relationship-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      relationship: {
+        id: "relationship-2",
+        workId: "work-1",
+        versionNo: 1,
+        fromCharacterId: "character-1",
+        toCharacterId: "character-2",
+        category: "social",
+        subtype: "导师",
+        keywords: ["舰队", "传承"],
+        directed: true,
+        confidence: 0.9,
+        confirmationStatus: "confirmed"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "relationship",
+        entityId: "relationship-2",
+        title: "character-1 → character-2",
+        versionNo: 1,
+        module: "relationships",
+        relatedEntityIds: {
+          fromCharacterId: "character-1",
+          toCharacterId: "character-2"
+        }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/works/work-1/relationships",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "relationship-create-0001",
+      body: expect.objectContaining({
+        fromCharacterId: "character-1",
+        toCharacterId: "character-2",
+        category: "social",
+        subtype: "导师"
       })
     });
   });
