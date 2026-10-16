@@ -613,6 +613,28 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/foreshadows") {
+        const input = body as Record<string, unknown>;
+        response.end(JSON.stringify({
+          data: {
+            id: "foreshadow-2",
+            workId: "work-1",
+            versionNo: 1,
+            ...input,
+            occurrences: [{
+              id: "occurrence-2",
+              foreshadowId: "foreshadow-2",
+              chapterId: "chapter-26",
+              chapterTitle: "第二十六章 归航",
+              volumeId: "volume-1",
+              role: "setup",
+              note: "钟面闪过一行陌生坐标。",
+              evidence: []
+            }]
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -706,7 +728,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_relationship",
       "create_volume",
       "create_chapter",
-      "set_chapter_outline"
+      "set_chapter_outline",
+      "create_foreshadow"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2128,6 +2151,63 @@ describe("Scriverse MCP Bridge", () => {
       authorization: "Bearer scrv_test-secret",
       idempotencyKey: "chapter-outline-create-0001",
       body: expect.objectContaining({ goal: "让舰队决定穿越灰烬门。", status: "ready" })
+    });
+  });
+
+  it("创建正式伏笔及其初始章节出现位置", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_foreshadow",
+      arguments: {
+        workId: "work-1",
+        title: "航海钟上的陌生坐标",
+        description: "停摆前浮现的坐标指向灰烬门。",
+        status: "planted",
+        importance: "high",
+        plannedPayoffChapterId: "chapter-26",
+        occurrences: [{
+          chapterId: "chapter-26",
+          role: "setup",
+          note: "钟面闪过一行陌生坐标。",
+          evidence: []
+        }],
+        idempotencyKey: "foreshadow-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      foreshadow: expect.objectContaining({
+        id: "foreshadow-2",
+        workId: "work-1",
+        title: "航海钟上的陌生坐标",
+        versionNo: 1,
+        occurrences: [expect.objectContaining({ id: "occurrence-2", chapterId: "chapter-26", role: "setup" })]
+      }),
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "foreshadow",
+        entityId: "foreshadow-2",
+        title: "航海钟上的陌生坐标",
+        versionNo: 1,
+        module: "outlines",
+        relatedEntityIds: {
+          plannedPayoffChapterId: "chapter-26",
+          occurrenceIds: ["occurrence-2"]
+        }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/works/work-1/foreshadows",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "foreshadow-create-0001",
+      body: expect.objectContaining({
+        title: "航海钟上的陌生坐标",
+        plannedPayoffChapterId: "chapter-26",
+        occurrences: [expect.objectContaining({ chapterId: "chapter-26", role: "setup" })]
+      })
     });
   });
 

@@ -520,8 +520,8 @@ const foreshadowOccurrenceSchema = z.object({
   chapterId: identifier,
   role: z.enum(["setup", "reminder", "payoff"]),
   note: z.string().max(100_000).optional(),
-  evidence: z.array(z.unknown()).optional()
-});
+  evidence: z.array(z.unknown()).max(100).optional()
+}).strict();
 
 const foreshadowSchema = z.object({
   title: nonEmpty.max(300),
@@ -531,7 +531,7 @@ const foreshadowSchema = z.object({
   plannedPayoffChapterId: identifier.nullable().optional(),
   resolutionNote: z.string().max(100_000).optional(),
   occurrences: z.array(foreshadowOccurrenceSchema).max(500).optional()
-});
+}).strict();
 
 const reviewSchema = z.object({
   itemType: nonEmpty.max(100),
@@ -2950,8 +2950,17 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       : store.listForeshadows(request.params.workId, query.status, query.currentChapterId));
   });
   app.post("/api/works/:workId/foreshadows", (request, response) => {
-    const foreshadow = store.createForeshadow(request.params.workId, parse(foreshadowSchema, request.body));
-    data(response, foreshadow, 201);
+    const input = parse(foreshadowSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "foreshadow.create",
+      input,
+      () => store.createForeshadow(request.params.workId, input),
+      201,
+      () => store.findForeshadowDuplicateCandidates(request.params.workId, input.title)
+    );
   });
   app.get("/api/foreshadows/:foreshadowId", (request, response) => data(response, store.getForeshadow(request.params.foreshadowId)));
   app.patch("/api/foreshadows/:foreshadowId", (request, response) => {

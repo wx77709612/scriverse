@@ -600,6 +600,61 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "outline.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建正式伏笔并在跨作品章节失败时完整回滚", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_foreshadow");
+    const otherFixture = await registerFixture(runtime, "idempotent_foreshadow_other");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const volume = runWithRequestActor(fixture.user, () => runtime.store.createVolume(fixture.workId, { title: "第一卷" }));
+    const chapter = runWithRequestActor(fixture.user, () => runtime.store.createChapter(fixture.workId, {
+      volumeId: String(volume.id),
+      title: "第三章 灰烬门"
+    }));
+    const otherVolume = runWithRequestActor(otherFixture.user, () => runtime.store.createVolume(otherFixture.workId, { title: "他作分卷" }));
+    const otherChapter = runWithRequestActor(otherFixture.user, () => runtime.store.createChapter(otherFixture.workId, {
+      volumeId: String(otherVolume.id),
+      title: "他作章节"
+    }));
+    const chapterId = String(chapter.id);
+    const payload = {
+      title: "航海钟上的陌生坐标",
+      description: "停摆前浮现的坐标指向灰烬门。",
+      status: "planted",
+      importance: "high",
+      plannedPayoffChapterId: chapterId,
+      occurrences: [{ chapterId, role: "setup", note: "钟面闪过陌生坐标。", evidence: [] }]
+    };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/foreshadows`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-create-0001").send(payload).expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/foreshadows`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/foreshadows`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "foreshadow", title: payload.title, versionNo: 1 })] }
+    });
+
+    await request(runtime.app).post(`/api/works/${fixture.workId}/foreshadows`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-foreign-payoff-0001")
+      .send({ ...payload, title: "越界回收章节", plannedPayoffChapterId: otherChapter.id, occurrences: [] }).expect(400);
+    await request(runtime.app).post(`/api/works/${fixture.workId}/foreshadows`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-foreign-occurrence-0001")
+      .send({ ...payload, title: "越界出现位置", plannedPayoffChapterId: null, occurrences: [{ chapterId: otherChapter.id, role: "setup" }] }).expect(400);
+
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM foreshadows WHERE work_id = ?", fixture.workId)).toEqual({ count: 1 });
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM foreshadow_occurrences WHERE foreshadow_id = ?", created.body.data.id)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'foreshadow' AND entity_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'foreshadow.created'", created.body.data.id))
+      .toEqual({ action: "foreshadow.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

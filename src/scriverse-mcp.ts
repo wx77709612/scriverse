@@ -40,6 +40,12 @@ const idempotencyKey = z.string().trim().min(16).max(128)
   .describe("幂等键；同一用户、作品和工具重试时必须复用该值");
 const allowDuplicate = z.boolean().optional().default(false)
   .describe("仅在已经检查候选且确认要保留重名记录时设为 true");
+const foreshadowOccurrenceInput = z.object({
+  chapterId: identifier.describe("同一作品内的章节 ID"),
+  role: z.enum(["setup", "reminder", "payoff"]).describe("出现位置的作用"),
+  note: z.string().max(100_000).optional().describe("出现位置说明"),
+  evidence: z.array(z.unknown()).max(100).optional().describe("结构化证据")
+}).strict();
 
 function normalizeBaseUrl(value: string): string {
   let url: URL;
@@ -1513,6 +1519,61 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
           }
         });
         return result("已创建 Scriverse 正式章节大纲：", creation, { chapterOutline, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_foreshadow",
+    {
+      title: "创建 Scriverse 正式伏笔",
+      description: "在作品的大纲与伏笔模块中创建正式伏笔，可同时关联初始章节出现位置。疑似同名时返回候选；确认仍需新增时可设置 allowDuplicate。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        title: z.string().trim().min(1).max(300).describe("伏笔标题"),
+        description: z.string().max(100_000).optional().describe("伏笔说明"),
+        status: z.enum(["planned", "planted", "resolved", "abandoned"]).optional().describe("伏笔状态"),
+        importance: z.enum(["low", "medium", "high"]).optional().describe("重要程度"),
+        plannedPayoffChapterId: identifier.nullable().optional().describe("计划回收章节 ID"),
+        resolutionNote: z.string().max(100_000).optional().describe("回收说明"),
+        occurrences: z.array(foreshadowOccurrenceInput).max(500).optional().describe("初始章节出现位置"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const foreshadow = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/foreshadows`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        const foreshadowRecord = foreshadow && typeof foreshadow === "object" && !Array.isArray(foreshadow)
+          ? foreshadow as Record<string, unknown>
+          : {};
+        const occurrenceIds = Array.isArray(foreshadowRecord.occurrences)
+          ? foreshadowRecord.occurrences.flatMap((occurrence) => (
+            occurrence && typeof occurrence === "object" && typeof (occurrence as Record<string, unknown>).id === "string"
+              ? [(occurrence as Record<string, unknown>).id as string]
+              : []
+          ))
+          : [];
+        const creation = creationSummary(foreshadow, {
+          workId,
+          entityType: "foreshadow",
+          module: "outlines",
+          title: input.title,
+          relatedEntityIds: {
+            plannedPayoffChapterId: input.plannedPayoffChapterId,
+            occurrenceIds: occurrenceIds.length > 0 ? occurrenceIds : undefined
+          }
+        });
+        return result("已创建 Scriverse 正式伏笔：", creation, { foreshadow, creation });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

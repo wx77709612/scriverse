@@ -5816,6 +5816,28 @@ export class Store {
     return this.mapForeshadowList(rows, currentChapterId);
   }
 
+  findForeshadowDuplicateCandidates(workId: string, title: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    return this.db.all(
+      `SELECT id, work_id, title, status, importance, planned_payoff_chapter_id
+       FROM foreshadows
+       WHERE work_id = ? AND lower(trim(title)) = lower(trim(?))
+       ORDER BY updated_at DESC, id
+       LIMIT 20`,
+      workId,
+      title
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "foreshadow",
+      title: requiredString(row, "title"),
+      status: requiredString(row, "status"),
+      importance: requiredString(row, "importance"),
+      plannedPayoffChapterId: optionalString(row, "planned_payoff_chapter_id"),
+      versionNo: this.currentEntityVersionNo("foreshadow", requiredString(row, "id"))
+    }));
+  }
+
   listForeshadowsPage(workId: string, pagination: Pagination, status: "all" | "unresolved" | "resolved" = "all", currentChapterId?: string): PaginatedResult<Record<string, unknown>> {
     this.getWork(workId);
     if (currentChapterId) this.assertChapterInWork(currentChapterId, workId);
