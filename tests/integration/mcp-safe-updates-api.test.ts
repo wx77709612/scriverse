@@ -1,0 +1,95 @@
+import request from "supertest";
+import { afterEach, describe, expect, it } from "vitest";
+import { createRuntime, type Runtime } from "../../src/app.js";
+import { runWithRequestActor } from "../../src/request-context.js";
+
+const setupToken = "mcp-safe-updates-setup-token-with-enough-length";
+const masterSecret = "mcp-safe-updates-master-secret-with-enough-length";
+
+type RegisteredFixture = {
+  apiKey: string;
+  user: {
+    userId: string;
+    username: string;
+    displayName: string;
+    role: "admin" | "user";
+  };
+  workId: string;
+};
+
+function createTestRuntime(): Runtime {
+  return createRuntime({
+    databasePath: ":memory:",
+    masterSecret,
+    serveUi: false,
+    revealCaptchaAnswer: true,
+    security: { allowRegistration: true, enforceSameOrigin: false, setupToken }
+  });
+}
+
+async function solveCaptcha(runtime: Runtime): Promise<{ captchaId: string; captchaAnswer: string }> {
+  const response = await request(runtime.app).get("/api/auth/captcha").expect(200);
+  return { captchaId: String(response.body.data.captchaId), captchaAnswer: String(response.body.data.answer) };
+}
+
+async function registerFixture(runtime: Runtime, username: string): Promise<RegisteredFixture> {
+  const agent = request.agent(runtime.app);
+  const registration = await agent.post("/api/auth/register").send({
+    username,
+    password: "secure-password-123",
+    passwordConfirmation: "secure-password-123",
+    setupToken,
+    ...await solveCaptcha(runtime)
+  }).expect(201);
+  const csrfToken = String(registration.body.data.csrfToken);
+  const work = await agent.post("/api/works").set("X-CSRF-Token", csrfToken).send({ title: `${username} 的作品` }).expect(201);
+  const key = await agent.post("/api/auth/api-key/reset").set("X-CSRF-Token", csrfToken).send({}).expect(200);
+  return {
+    apiKey: String(key.body.data.apiKey),
+    user: registration.body.data.user,
+    workId: String(work.body.data.id)
+  };
+}
+
+describe("MCP 安全更新契约", () => {
+  const runtimes: Runtime[] = [];
+
+  afterEach(async () => {
+    await Promise.all(runtimes.splice(0).map((runtime) => runtime.close()));
+  });
+
+  it("使用 expectedVersionNo 更新想法并拒绝过期版本与越权用户", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_draft_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_draft_outsider");
+    const draft = runWithRequestActor(owner.user, () => runtime.store.createDraft(owner.workId, {
+      draftType: "setting",
+      settingModule: "organizations",
+      title: "观星会",
+      content: "他们记录熄灭的恒星。"
+    }));
+    const draftId = String(draft.id);
+    const updated = await request(runtime.app).patch(`/api/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ title: "观星会的密约", content: "他们记录每一颗熄灭的恒星。", changeNote: "补充组织秘密", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: draftId, title: "观星会的密约", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ title: "不得覆盖的新标题", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/drafts/${draftId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ title: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getDraft(draftId)).toMatchObject({ title: "观星会的密约", versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'draft' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      draftId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'draft.updated'", draftId))
+      .toEqual({ action: "draft.updated", user_id: owner.user.userId });
+  });
+});

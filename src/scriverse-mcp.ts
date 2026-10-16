@@ -1773,5 +1773,46 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_draft",
+    {
+      title: "安全更新 Scriverse 想法",
+      description: "使用当前版本号更新已有想法；若用户已在其他位置修改该想法，则返回版本冲突而不会覆盖新内容。",
+      inputSchema: z.object({
+        draftId: identifier.describe("想法 ID"),
+        draftType: z.enum(["prose", "setting"]).optional().describe("正文类或设定库类想法"),
+        volumeId: identifier.nullable().optional().describe("正文类想法关联的分卷 ID"),
+        settingModule: z.enum(DRAFT_SETTING_MODULES).nullable().optional().describe("设定库类想法关联的模块"),
+        title: z.string().trim().min(1).max(200).optional().describe("想法标题"),
+        content: z.string().max(200_000).optional().describe("想法内容，支持 Markdown"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.draftType,
+        value.volumeId,
+        value.settingModule,
+        value.title,
+        value.content
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项想法内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ draftId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const draft = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/drafts/${encodeURIComponent(draftId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 想法：", draft, { draft });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

@@ -163,6 +163,20 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/drafts/draft-3") {
+        response.end(JSON.stringify({
+          data: {
+            id: "draft-3",
+            workId: "work-1",
+            draftType: "setting",
+            settingModule: "organizations",
+            title: "观星会的密约",
+            content: "他们记录每一颗熄灭的恒星。",
+            versionNo: 3
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/settings?includeContent=false&page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -793,7 +807,8 @@ describe("Scriverse MCP Bridge", () => {
       "add_foreshadow_occurrence",
       "create_chapter_comment",
       "create_review_record",
-      "set_writing_goal"
+      "set_writing_goal",
+      "update_draft"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2475,6 +2490,44 @@ describe("Scriverse MCP Bridge", () => {
       authorization: "Bearer scrv_test-secret",
       idempotencyKey: "writing-goal-create-0001",
       body: { dailyGoal: 2000, targetTotal: 120000, deadline: "2027-03-01" }
+    });
+  });
+
+  it("使用期望版本号安全更新想法", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_draft",
+      arguments: {
+        draftId: "draft-3",
+        title: "观星会的密约",
+        content: "他们记录每一颗熄灭的恒星。",
+        changeNote: "补充组织秘密",
+        expectedVersionNo: 2
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      draft: {
+        id: "draft-3",
+        workId: "work-1",
+        draftType: "setting",
+        settingModule: "organizations",
+        title: "观星会的密约",
+        content: "他们记录每一颗熄灭的恒星。",
+        versionNo: 3
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/drafts/draft-3",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        title: "观星会的密约",
+        content: "他们记录每一颗熄灭的恒星。",
+        changeNote: "补充组织秘密",
+        expectedVersionNo: 2
+      }
     });
   });
 
