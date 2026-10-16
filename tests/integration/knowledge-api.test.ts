@@ -103,13 +103,24 @@ describe("设定、角色、时间轴、关系和审核 API", () => {
   });
 
   it("合并和拆分时间轴事件时保留参与者与证据", async () => {
+    const volume = await request(runtime.app).post(`/api/works/${workId}/volumes`).send({ title: "第一卷" }).expect(201);
+    const chapterA = await request(runtime.app).post(`/api/works/${workId}/chapters`).send({
+      volumeId: volume.body.data.id,
+      title: "第一章 警报"
+    }).expect(201);
+    const chapterB = await request(runtime.app).post(`/api/works/${workId}/chapters`).send({
+      volumeId: volume.body.data.id,
+      title: "第二章 离港"
+    }).expect(201);
+    const characterA = await request(runtime.app).post(`/api/works/${workId}/characters`).send({ name: "林舟" }).expect(201);
+    const characterB = await request(runtime.app).post(`/api/works/${workId}/characters`).send({ name: "沈星" }).expect(201);
     const first = await request(runtime.app).post(`/api/works/${workId}/timeline`).send({
       name: "警报触发",
       description: "北港响起警报。",
       timeLabel: "启航日",
       timeSort: 1,
-      chapterIds: ["chapter-a"],
-      participantIds: ["character-a"],
+      chapterIds: [chapterA.body.data.id],
+      participantIds: [characterA.body.data.id],
       evidence: [{ quote: "警报响起" }],
       status: "confirmed"
     }).expect(201);
@@ -118,8 +129,8 @@ describe("设定、角色、时间轴、关系和审核 API", () => {
       description: "飞船驶离北港。",
       timeLabel: "启航日",
       timeSort: 2,
-      chapterIds: ["chapter-b"],
-      participantIds: ["character-b"],
+      chapterIds: [chapterB.body.data.id],
+      participantIds: [characterB.body.data.id],
       evidence: [{ quote: "引擎点火" }],
       status: "candidate"
     }).expect(201);
@@ -129,7 +140,7 @@ describe("设定、角色、时间轴、关系和审核 API", () => {
       name: "北港启航"
     }).expect(201);
     expect(merged.body.data).toMatchObject({ name: "北港启航", timeSort: 1, status: "pending" });
-    expect(merged.body.data.chapterIds).toEqual(["chapter-a", "chapter-b"]);
+    expect(merged.body.data.chapterIds).toEqual([chapterA.body.data.id, chapterB.body.data.id]);
     expect(merged.body.data.evidence).toHaveLength(2);
     await request(runtime.app).get(`/api/timeline/${first.body.data.id}`).expect(404);
 
