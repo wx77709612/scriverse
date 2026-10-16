@@ -2006,5 +2006,46 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_organization",
+    {
+      title: "安全更新 Scriverse 正式组织",
+      description: "使用当前版本号更新正式组织及其角色成员关联；版本冲突或跨作品引用会被拒绝。",
+      inputSchema: z.object({
+        organizationId: identifier.describe("组织 ID"),
+        name: z.string().trim().min(1).max(200).optional().describe("组织名称"),
+        isDissolved: z.boolean().optional().describe("是否已经解散"),
+        description: z.string().max(100_000).optional().describe("组织描述"),
+        settingsMarkdown: z.string().max(200_000).optional().describe("组织资料，支持 Markdown"),
+        memberIds: z.array(identifier).max(1000).optional().describe("同一作品内的角色成员 ID"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.name,
+        value.isDissolved,
+        value.description,
+        value.settingsMarkdown,
+        value.memberIds
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项组织内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ organizationId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const organization = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/organizations/${encodeURIComponent(organizationId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 正式组织：", organization, { organization });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

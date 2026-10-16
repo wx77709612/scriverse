@@ -407,6 +407,21 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/organizations/organization-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "organization-1",
+            workId: "work-1",
+            name: "新观星会",
+            description: "保存熄灭恒星的观测记录。",
+            isDissolved: false,
+            settingsMarkdown: "## 章程\n\n每一次观测都必须由两名记录员交叉签名。",
+            memberIds: ["character-1"],
+            versionNo: 7
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/timeline-tracks?page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -875,7 +890,8 @@ describe("Scriverse MCP Bridge", () => {
       "update_setting",
       "update_character",
       "update_character_section",
-      "update_race"
+      "update_race",
+      "update_organization"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2763,6 +2779,47 @@ describe("Scriverse MCP Bridge", () => {
         memberIds: ["character-1"],
         changeNote: "补充种族现状",
         expectedVersionNo: 3
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新正式组织", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_organization",
+      arguments: {
+        organizationId: "organization-1",
+        name: "新观星会",
+        settingsMarkdown: "## 章程\n\n每一次观测都必须由两名记录员交叉签名。",
+        memberIds: ["character-1"],
+        changeNote: "更新组织章程",
+        expectedVersionNo: 6
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      organization: {
+        id: "organization-1",
+        workId: "work-1",
+        name: "新观星会",
+        description: "保存熄灭恒星的观测记录。",
+        isDissolved: false,
+        settingsMarkdown: "## 章程\n\n每一次观测都必须由两名记录员交叉签名。",
+        memberIds: ["character-1"],
+        versionNo: 7
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/organizations/organization-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        name: "新观星会",
+        settingsMarkdown: "## 章程\n\n每一次观测都必须由两名记录员交叉签名。",
+        memberIds: ["character-1"],
+        changeNote: "更新组织章程",
+        expectedVersionNo: 6
       }
     });
   });

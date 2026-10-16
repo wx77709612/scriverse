@@ -229,4 +229,38 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'race.updated'", raceId))
       .toEqual({ action: "race.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新正式组织并拒绝跨作品成员", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_organization_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_organization_outsider");
+    const organization = runWithRequestActor(owner.user, () => runtime.store.createOrganization(owner.workId, { name: "观星会" }));
+    const foreignCharacter = runWithRequestActor(outsider.user, () => runtime.store.createCharacter(outsider.workId, { name: "异乡人" }));
+    const organizationId = String(organization.id);
+    const updated = await request(runtime.app).patch(`/api/organizations/${organizationId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ name: "新观星会", description: "他们保存熄灭恒星的观测记录。", changeNote: "更新组织章程", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: organizationId, name: "新观星会", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/organizations/${organizationId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ description: "不得覆盖的新内容", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/organizations/${organizationId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ memberIds: [foreignCharacter.id], expectedVersionNo: 2 }).expect(400);
+    await request(runtime.app).patch(`/api/organizations/${organizationId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ description: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getOrganization(organizationId)).toMatchObject({ name: "新观星会", versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'organization' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      organizationId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'organization.updated'", organizationId))
+      .toEqual({ action: "organization.updated", user_id: owner.user.userId });
+  });
 });
