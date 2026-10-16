@@ -1420,5 +1420,54 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_chapter",
+    {
+      title: "创建 Scriverse 正式章节",
+      description: "在作品正文模块中创建新章节，可写入初始正文并指定插入位置。疑似同名时返回候选；确认仍需新增时可设置 allowDuplicate。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        volumeId: identifier.describe("同一作品内的分卷 ID"),
+        title: z.string().trim().min(1).max(300).describe("章节标题"),
+        content: z.string().max(2_000_000).optional().describe("新章节的初始正文"),
+        chapterType: z.enum(["正文", "设定", "作者的话", "其他"]).optional().describe("章节类型"),
+        insertAfterChapterId: identifier.optional().describe("同一作品内的前置章节 ID"),
+        insertBeforeChapterId: identifier.optional().describe("同一作品内的后置章节 ID"),
+        numberTitle: z.boolean().optional().describe("是否按照作品规则自动编号"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict().refine(
+        (value) => value.insertAfterChapterId === undefined || value.insertBeforeChapterId === undefined,
+        { message: "不能同时指定章节前后插入位置" }
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const chapter = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/chapters`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        const creation = creationSummary(chapter, {
+          workId,
+          entityType: "chapter",
+          module: "prose",
+          title: input.title,
+          relatedEntityIds: {
+            volumeId: input.volumeId,
+            insertAfterChapterId: input.insertAfterChapterId,
+            insertBeforeChapterId: input.insertBeforeChapterId
+          }
+        });
+        return result("已创建 Scriverse 正式章节：", creation, { chapter, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

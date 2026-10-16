@@ -3333,6 +3333,29 @@ export class Store {
     });
   }
 
+  findChapterDuplicateCandidates(workId: string, volumeId: string, title: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    const volume = this.getVolume(volumeId);
+    if (volume.workId !== workId) throw new AppError(400, "VOLUME_WORK_MISMATCH", "卷不属于当前作品");
+    return this.db.all(
+      `SELECT id, work_id, volume_id, title, chapter_type, version_no
+       FROM chapters
+       WHERE work_id = ? AND volume_id = ? AND deleted_at IS NULL AND title = ? COLLATE NOCASE
+       LIMIT 20`,
+      workId,
+      volumeId,
+      title
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "chapter",
+      volumeId: requiredString(row, "volume_id"),
+      title: requiredString(row, "title"),
+      chapterType: requiredString(row, "chapter_type"),
+      versionNo: numberValue(row, "version_no")
+    }));
+  }
+
   describeChapterTitleFormat(workId: string): { preference: ChapterTitlePreference; detected: ChapterTitleFormatId | null; resolved: ChapterTitleFormatId | null } {
     const work = this.getWork(workId);
     const preference = isChapterTitlePreference(String(work.chapterTitleFormat ?? ""))

@@ -595,6 +595,11 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "volume-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/chapters") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "chapter-27", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -686,7 +691,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_timeline_track",
       "create_timeline_event",
       "create_relationship",
-      "create_volume"
+      "create_volume",
+      "create_chapter"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2005,6 +2011,60 @@ describe("Scriverse MCP Bridge", () => {
       authorization: "Bearer scrv_test-secret",
       idempotencyKey: "volume-create-0001",
       body: expect.objectContaining({ title: "第二卷 归航", kind: "main", storyOrder: 2 })
+    });
+  });
+
+  it("创建正式章节并保留分卷与插入锚点关联", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_chapter",
+      arguments: {
+        workId: "work-1",
+        volumeId: "volume-1",
+        title: "第二十七章 灰烬门",
+        content: "舰队驶入最后一片灰烬区。",
+        chapterType: "正文",
+        insertAfterChapterId: "chapter-26",
+        idempotencyKey: "chapter-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      chapter: {
+        id: "chapter-27",
+        workId: "work-1",
+        versionNo: 1,
+        volumeId: "volume-1",
+        title: "第二十七章 灰烬门",
+        content: "舰队驶入最后一片灰烬区。",
+        chapterType: "正文",
+        insertAfterChapterId: "chapter-26"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "chapter",
+        entityId: "chapter-27",
+        title: "第二十七章 灰烬门",
+        versionNo: 1,
+        module: "prose",
+        relatedEntityIds: {
+          volumeId: "volume-1",
+          insertAfterChapterId: "chapter-26"
+        }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/works/work-1/chapters",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "chapter-create-0001",
+      body: expect.objectContaining({
+        volumeId: "volume-1",
+        title: "第二十七章 灰烬门",
+        insertAfterChapterId: "chapter-26"
+      })
     });
   });
 

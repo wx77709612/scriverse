@@ -516,6 +516,51 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "volume.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建章节并拒绝跨作品分卷与插入锚点", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_chapter");
+    const other = await registerFixture(runtime, "idempotent_chapter_other");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const volume = runWithRequestActor(fixture.user, () => runtime.store.createVolume(fixture.workId, { title: "第一卷" }));
+    const foreignVolume = runWithRequestActor(other.user, () => runtime.store.createVolume(other.workId, { title: "他作卷" }));
+    const foreignChapter = runWithRequestActor(other.user, () => runtime.store.createChapter(other.workId, {
+      volumeId: String(foreignVolume.id),
+      title: "他作章节"
+    }));
+    const payload = {
+      volumeId: volume.id,
+      title: "第一章 归航",
+      content: "舰队驶入最后一片灰烬区。",
+      chapterType: "正文"
+    };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/chapters`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-create-0001").send(payload).expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/chapters`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/chapters`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "chapter", title: payload.title, versionNo: 1 })] }
+    });
+    await request(runtime.app).post(`/api/works/${fixture.workId}/chapters`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-foreign-volume-0001")
+      .send({ ...payload, volumeId: foreignVolume.id, title: "越界分卷" }).expect(400);
+    await request(runtime.app).post(`/api/works/${fixture.workId}/chapters`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-foreign-anchor-0001")
+      .send({ ...payload, title: "越界锚点", insertAfterChapterId: foreignChapter.id }).expect(400);
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM chapters WHERE work_id = ? AND deleted_at IS NULL", fixture.workId)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM chapter_versions WHERE chapter_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'chapter.created'", created.body.data.id))
+      .toEqual({ action: "chapter.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

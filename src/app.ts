@@ -2758,7 +2758,16 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     }).strict().refine((value) => value.insertAfterChapterId === undefined || value.insertBeforeChapterId === undefined, {
       message: "不能同时指定章节前后插入位置"
     }), request.body);
-    data(response, store.createChapter(request.params.workId, input), 201);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "chapter.create",
+      input,
+      () => store.createChapter(request.params.workId, input),
+      201,
+      () => store.findChapterDuplicateCandidates(request.params.workId, input.volumeId, input.title)
+    );
   });
   app.get("/api/works/:workId/deleted-chapters", (request, response) => {
     const pagination = parsePagination(request.query);
