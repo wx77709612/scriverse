@@ -5,6 +5,7 @@ import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime, type Runtime } from "../../src/app.js";
 import { runWithRequestActor } from "../../src/request-context.js";
+import { fullWorkModulePermissions } from "../../src/work-permissions.js";
 
 const setupToken = "mcp-idempotency-setup-token-with-enough-length";
 const masterSecret = "mcp-idempotency-master-secret-with-enough-length";
@@ -619,6 +620,125 @@ describe("MCP 写入幂等契约", () => {
     expect(undoReplay.headers["idempotency-replayed"]).toBe("true");
     expect(undoReplay.body.data.id).toBe(undo.body.data.id);
     expect(runtime.database.get("SELECT COUNT(*) AS count FROM ai_write_plans WHERE work_id = ?", fixture.workId)).toEqual({ count: 2 });
+  });
+
+  it("正文计划按 API Key 作品与模块权限隔离并安全保存 SQL 特殊字符", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "chapter_plan_permission_owner");
+    const collaborator = await registerFixture(runtime, "chapter_plan_permission_collaborator");
+    const outsider = await registerFixture(runtime, "chapter_plan_permission_outsider");
+    const ownerAuthorization = `Bearer ${owner.apiKey}`;
+    const collaboratorAuthorization = `Bearer ${collaborator.apiKey}`;
+    const volume = runWithRequestActor(owner.user, () => runtime.store.createVolume(owner.workId, { title: "权限卷" }));
+    const chapter = runWithRequestActor(owner.user, () => runtime.store.createChapter(owner.workId, {
+      volumeId: String(volume.id),
+      title: "权限章",
+      content: "原始正文"
+    }));
+    const foreignVolume = runWithRequestActor(collaborator.user, () => runtime.store.createVolume(collaborator.workId, { title: "他作卷" }));
+    const foreignChapter = runWithRequestActor(collaborator.user, () => runtime.store.createChapter(collaborator.workId, {
+      volumeId: String(foreignVolume.id),
+      title: "他作章节",
+      content: "他作正文"
+    }));
+    const chapterId = String(chapter.id);
+    const basePayload = {
+      chapterId,
+      content: "'); DROP TABLE chapters; --",
+      expectedVersionNo: Number(chapter.versionNo),
+      summary: "验证特殊字符正文"
+    };
+
+    const invalidKey = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", "Bearer scrv_invalid-key")
+      .set("Idempotency-Key", "chapter-plan-invalid-key-0001")
+      .send(basePayload)
+      .expect(401);
+    expect(invalidKey.body.error.code).toBe("API_KEY_INVALID");
+
+    const outsiderDenied = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .set("Idempotency-Key", "chapter-plan-outsider-0001")
+      .send(basePayload)
+      .expect(403);
+    expect(outsiderDenied.body.error.code).toBe("WORK_ACCESS_DENIED");
+
+    const allPermissions = fullWorkModulePermissions();
+    runtime.auth.addMember(owner.workId, collaborator.user.userId, {
+      permissions: { ...allPermissions, prose: "read", "ai-chat": "write" }
+    }, owner.user.userId);
+    const proseDenied = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", collaboratorAuthorization)
+      .set("Idempotency-Key", "chapter-plan-prose-denied-0001")
+      .send(basePayload)
+      .expect(403);
+    expect(proseDenied.body.error.code).toBe("WORK_MODULE_WRITE_DENIED");
+
+    runtime.auth.updateMemberPermissions(owner.workId, collaborator.user.userId, {
+      permissions: { ...allPermissions, prose: "write", "ai-chat": "read" }
+    });
+    const aiChatDenied = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", collaboratorAuthorization)
+      .set("Idempotency-Key", "chapter-plan-ai-denied-0001")
+      .send(basePayload)
+      .expect(403);
+    expect(aiChatDenied.body.error.code).toBe("WORK_MODULE_WRITE_DENIED");
+
+    runtime.auth.updateMemberPermissions(owner.workId, collaborator.user.userId, { permissions: allPermissions });
+    const crossWork = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", ownerAuthorization)
+      .set("Idempotency-Key", "chapter-plan-cross-work-0001")
+      .send({ ...basePayload, chapterId: foreignChapter.id })
+      .expect(403);
+    expect(crossWork.body.error.code).toBe("CROSS_WORK_REFERENCE");
+
+    const prepared = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", collaboratorAuthorization)
+      .set("Idempotency-Key", "chapter-plan-permission-0001")
+      .send(basePayload)
+      .expect(201);
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({ content: "原始正文", versionNo: chapter.versionNo });
+
+    runtime.auth.updateMemberPermissions(owner.workId, collaborator.user.userId, {
+      permissions: { ...allPermissions, prose: "read", "ai-chat": "write" }
+    });
+    const invalidated = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/${prepared.body.data.id}/confirm`)
+      .set("Authorization", collaboratorAuthorization)
+      .expect(409);
+    expect(invalidated.body.error.code).toBe("AI_PLAN_INVALIDATED");
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({ content: "原始正文", versionNo: chapter.versionNo });
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM chapter_versions WHERE chapter_id = ?", chapterId)).toEqual({ count: 1 });
+
+    runtime.auth.updateMemberPermissions(owner.workId, collaborator.user.userId, { permissions: allPermissions });
+    const retryPlan = await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", collaboratorAuthorization)
+      .set("Idempotency-Key", "chapter-plan-permission-0002")
+      .send(basePayload)
+      .expect(201);
+    await request(runtime.app)
+      .post(`/api/works/${owner.workId}/ai/write-plans/${retryPlan.body.data.id}/confirm`)
+      .set("Authorization", collaboratorAuthorization)
+      .expect(200);
+    expect(runtime.store.getChapter(chapterId).content).toBe(basePayload.content);
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM chapters WHERE work_id = ?", owner.workId)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT created_by_user_id FROM chapter_versions WHERE chapter_id = ? AND version_no = 2",
+      chapterId
+    )).toEqual({ created_by_user_id: collaborator.user.userId });
+    expect(runtime.database.get(
+      "SELECT user_id FROM audit_logs WHERE action = 'chapter.saved' AND entity_id = ? ORDER BY rowid DESC LIMIT 1",
+      chapterId
+    )).toEqual({ user_id: collaborator.user.userId });
+    expect(runtime.database.all("PRAGMA foreign_key_check")).toEqual([]);
   });
 
   it("幂等创建章节大纲并阻止用新创建请求覆盖已有大纲", async () => {
