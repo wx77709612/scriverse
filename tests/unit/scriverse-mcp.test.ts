@@ -971,8 +971,11 @@ async function startScriverseFixture(options: {
   return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
 }
 
-async function connectMcp(baseUrl: string): Promise<Client> {
-  const server = createScriverseMcpServer({ baseUrl, apiKey: "scrv_test-secret" });
+async function connectMcp(baseUrl: string, options: {
+  fetchImpl?: typeof fetch;
+  requestTimeoutMs?: number;
+} = {}): Promise<Client> {
+  const server = createScriverseMcpServer({ baseUrl, apiKey: "scrv_test-secret", ...options });
   const client = new Client({ name: "scriverse-mcp-test", version: "1.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport);
@@ -3350,6 +3353,105 @@ describe("Scriverse MCP Bridge", () => {
         body: null
       }
     ]);
+  });
+
+  it("接受无内容响应并把它作为 null 返回给工具", async () => {
+    const client = await connectMcp("http://127.0.0.1:13210", {
+      fetchImpl: async () => new Response(null, { status: 204 })
+    });
+    const updated = await client.callTool({
+      name: "update_draft",
+      arguments: {
+        draftId: "draft-3",
+        title: "无内容响应",
+        expectedVersionNo: 2
+      }
+    });
+
+    expect(updated.isError).not.toBe(true);
+    expect(updated.structuredContent).toEqual({ draft: null });
+  });
+
+  it("把无效 JSON 转换为统一且不泄露响应内容的错误", async () => {
+    const client = await connectMcp("http://127.0.0.1:13210", {
+      fetchImpl: async () => new Response("<html>C:\\services\\scriverse\\stack</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" }
+      })
+    });
+    const response = await client.callTool({ name: "list_works", arguments: {} });
+
+    expect(response.isError).toBe(true);
+    expect(response.structuredContent).toEqual({
+      error: {
+        code: "SCRIVERSE_INVALID_RESPONSE",
+        message: "Scriverse 返回了无法解析的响应（HTTP 200）"
+      }
+    });
+    expect(JSON.stringify(response)).not.toContain("services");
+  });
+
+  it("统一清洗服务端内部错误中的 API Key、SQL、堆栈和内部路径", async () => {
+    const client = await connectMcp("http://127.0.0.1:13210", {
+      fetchImpl: async () => new Response(JSON.stringify({
+        error: {
+          code: "SQLITE_ERROR",
+          message: "SELECT * FROM users; scrv_test-secret at C:\\services\\scriverse\\src\\store.ts:18",
+          details: {
+            stack: "Error: SQLITE_ERROR\n at C:\\services\\scriverse\\src\\store.ts:18",
+            sql: "SELECT api_key FROM users"
+          }
+        }
+      }), { status: 500, headers: { "Content-Type": "application/json" } })
+    });
+    const response = await client.callTool({ name: "list_works", arguments: {} });
+    const serialized = JSON.stringify(response);
+
+    expect(response.structuredContent).toEqual({
+      error: {
+        code: "SCRIVERSE_INTERNAL_ERROR",
+        message: "Scriverse 服务处理请求时发生内部错误"
+      }
+    });
+    for (const secret of ["scrv_test-secret", "SELECT", "SQLITE", "store.ts", "services"]) {
+      expect(serialized).not.toContain(secret);
+    }
+  });
+
+  it("区分请求超时、本地服务不可用和 Tunnel 连接中断", async () => {
+    const timeoutClient = await connectMcp("http://127.0.0.1:13210", {
+      requestTimeoutMs: 10,
+      fetchImpl: ((_input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        const fallback = setTimeout(() => reject(new DOMException("aborted", "AbortError")), 50);
+        init?.signal?.addEventListener("abort", () => {
+          clearTimeout(fallback);
+          reject(new DOMException("aborted", "AbortError"));
+        }, { once: true });
+      })) as typeof fetch
+    });
+    const unavailableClient = await connectMcp("http://127.0.0.1:13210", {
+      fetchImpl: async () => { throw new Error("connect ECONNREFUSED scrv_test-secret C:\\private\\server"); }
+    });
+    const interruptedClient = await connectMcp("http://127.0.0.1:13210", {
+      fetchImpl: async () => { throw new Error("socket hang up scrv_test-secret C:\\private\\tunnel"); }
+    });
+
+    const timedOut = await timeoutClient.callTool({ name: "list_works", arguments: {} });
+    const unavailable = await unavailableClient.callTool({ name: "list_works", arguments: {} });
+    const interrupted = await interruptedClient.callTool({ name: "list_works", arguments: {} });
+
+    expect(timedOut.structuredContent).toEqual({
+      error: { code: "SCRIVERSE_REQUEST_TIMEOUT", message: "连接 Scriverse 超时，请确认本地服务和 Secure MCP Tunnel 正常运行" }
+    });
+    expect(unavailable.structuredContent).toEqual({
+      error: { code: "SCRIVERSE_SERVICE_UNAVAILABLE", message: "无法连接 Scriverse 本地服务，请确认服务已启动" }
+    });
+    expect(interrupted.structuredContent).toEqual({
+      error: { code: "SCRIVERSE_CONNECTION_INTERRUPTED", message: "与 Scriverse 的连接已中断，请确认 Secure MCP Tunnel 和本地服务仍在运行" }
+    });
+    const serialized = JSON.stringify([timedOut, unavailable, interrupted]);
+    expect(serialized).not.toContain("scrv_test-secret");
+    expect(serialized).not.toContain("private");
   });
 
   it("要求通过环境变量提供 Scriverse API Key", () => {

@@ -12,6 +12,7 @@ export type ScriverseMcpConfig = {
 
 type ScriverseMcpDependencies = ScriverseMcpConfig & {
   fetchImpl?: typeof fetch;
+  requestTimeoutMs?: number;
 };
 
 type ApiEnvelope = {
@@ -74,9 +75,38 @@ export function loadScriverseMcpConfig(environment: Record<string, string | unde
   };
 }
 
+const DEFAULT_SCRIVERSE_REQUEST_TIMEOUT_MS = 15_000;
+
+function sanitizePublicErrorText(value: string, apiKey: string): string {
+  const redacted = value
+    .replaceAll(apiKey, "[REDACTED]")
+    .replace(/scrv_[A-Za-z0-9._:-]+/gu, "[REDACTED]")
+    .replace(/\b[A-Za-z]:\\[^\r\n\t]*/gu, "[INTERNAL_PATH]")
+    .replace(/\/(?:home|Users|workspace|app|srv|var|tmp)\/[^\r\n\t ]*/gu, "[INTERNAL_PATH]")
+    .replace(/\r?\n\s*at\s+[^\r\n]*/gu, "")
+    .trim();
+  if (/\b(?:SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b[\s\S]*\b(?:FROM|INTO|SET|TABLE|VALUES)\b/iu.test(redacted)) {
+    return "Scriverse 请求失败";
+  }
+  return redacted || "Scriverse 请求失败";
+}
+
+function sanitizeErrorDetails(value: unknown, apiKey: string, depth = 0): unknown {
+  if (depth > 4) return undefined;
+  if (typeof value === "string") return sanitizePublicErrorText(value, apiKey);
+  if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => sanitizeErrorDetails(item, apiKey, depth + 1));
+  if (!value || typeof value !== "object") return undefined;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).flatMap(([key, item]) => {
+    if (/^(?:stack|sql|query|path|file|filename)$/iu.test(key)) return [];
+    const sanitized = sanitizeErrorDetails(item, apiKey, depth + 1);
+    return sanitized === undefined ? [] : [[key, sanitized]];
+  }));
+}
+
 function safeErrorMessage(error: unknown, apiKey: string): string {
   const message = error instanceof Error ? error.message : "Scriverse 请求失败";
-  return message.replaceAll(apiKey, "[REDACTED]");
+  return sanitizePublicErrorText(message, apiKey);
 }
 
 function errorResult(error: unknown, apiKey: string): CallToolResult {
@@ -96,7 +126,13 @@ function errorResult(error: unknown, apiKey: string): CallToolResult {
   }
   return {
     isError: true,
-    content: [{ type: "text", text: safeErrorMessage(error, apiKey) }]
+    content: [{ type: "text", text: safeErrorMessage(error, apiKey) }],
+    structuredContent: {
+      error: {
+        code: "SCRIVERSE_MCP_ERROR",
+        message: safeErrorMessage(error, apiKey)
+      }
+    }
   };
 }
 
@@ -224,7 +260,7 @@ function summarizeWritePlan(value: unknown): Record<string, unknown> {
 
 async function requestScriverse(
   fetchImpl: typeof fetch,
-  config: ScriverseMcpConfig,
+  config: ScriverseMcpConfig & { requestTimeoutMs?: number },
   path: string,
   options: {
     method?: "GET" | "POST" | "PUT" | "PATCH";
@@ -235,6 +271,9 @@ async function requestScriverse(
   } = {}
 ): Promise<unknown> {
   let response: Response;
+  const controller = new AbortController();
+  const timeoutMs = config.requestTimeoutMs ?? DEFAULT_SCRIVERSE_REQUEST_TIMEOUT_MS;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const url = new URL(`${config.baseUrl}${path}`);
     for (const [name, value] of Object.entries(options.query ?? {})) {
@@ -242,6 +281,7 @@ async function requestScriverse(
     }
     response = await fetchImpl(url, {
       method: options.method ?? "GET",
+      signal: controller.signal,
       headers: {
         Accept: "application/json",
         Authorization: `Bearer ${config.apiKey}`,
@@ -252,27 +292,59 @@ async function requestScriverse(
       ...(options.body ? { body: JSON.stringify(options.body) } : {})
     });
   } catch (error) {
-    throw new Error(`无法连接 Scriverse：${safeErrorMessage(error, config.apiKey)}`);
+    if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+      throw new ScriverseMcpToolError(
+        "SCRIVERSE_REQUEST_TIMEOUT",
+        "连接 Scriverse 超时，请确认本地服务和 Secure MCP Tunnel 正常运行"
+      );
+    }
+    const networkMessage = error instanceof Error ? error.message : "";
+    if (/(?:socket hang up|ECONNRESET|UND_ERR_SOCKET|premature close|connection closed)/iu.test(networkMessage)) {
+      throw new ScriverseMcpToolError(
+        "SCRIVERSE_CONNECTION_INTERRUPTED",
+        "与 Scriverse 的连接已中断，请确认 Secure MCP Tunnel 和本地服务仍在运行"
+      );
+    }
+    throw new ScriverseMcpToolError(
+      "SCRIVERSE_SERVICE_UNAVAILABLE",
+      "无法连接 Scriverse 本地服务，请确认服务已启动"
+    );
+  } finally {
+    clearTimeout(timeout);
   }
 
+  if (response.status === 204 || response.status === 205) return null;
   const text = await response.text();
   let payload: ApiEnvelope = {};
   if (text) {
     try {
       payload = JSON.parse(text) as ApiEnvelope;
     } catch {
-      throw new Error(`Scriverse 返回了无效 JSON（HTTP ${response.status}）`);
+      throw new ScriverseMcpToolError(
+        "SCRIVERSE_INVALID_RESPONSE",
+        `Scriverse 返回了无法解析的响应（HTTP ${response.status}）`
+      );
     }
   }
   if (!response.ok) {
+    if (response.status >= 500) {
+      throw new ScriverseMcpToolError(
+        "SCRIVERSE_INTERNAL_ERROR",
+        "Scriverse 服务处理请求时发生内部错误"
+      );
+    }
     const code = typeof payload.error?.code === "string" ? payload.error.code : `HTTP_${response.status}`;
-    const message = typeof payload.error?.message === "string" ? payload.error.message : "Scriverse 请求失败";
+    const message = typeof payload.error?.message === "string"
+      ? sanitizePublicErrorText(payload.error.message, config.apiKey)
+      : "Scriverse 请求失败";
     const details = payload.error?.details && typeof payload.error.details === "object" && !Array.isArray(payload.error.details)
-      ? payload.error.details as Record<string, unknown>
+      ? sanitizeErrorDetails(payload.error.details, config.apiKey) as Record<string, unknown>
       : {};
     throw new ScriverseMcpToolError(code, message, details);
   }
-  if (!("data" in payload)) throw new Error("Scriverse 响应缺少 data 字段");
+  if (!("data" in payload)) {
+    throw new ScriverseMcpToolError("SCRIVERSE_INVALID_RESPONSE", "Scriverse 响应缺少 data 字段");
+  }
   return payload.data;
 }
 
@@ -313,9 +385,14 @@ async function resolveWorkId(
 }
 
 export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies): McpServer {
-  const config: ScriverseMcpConfig = {
+  const requestTimeoutMs = dependencies.requestTimeoutMs ?? DEFAULT_SCRIVERSE_REQUEST_TIMEOUT_MS;
+  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 300_000) {
+    throw new Error("Scriverse MCP 请求超时必须是 1 到 300000 毫秒之间的整数");
+  }
+  const config: ScriverseMcpConfig & { requestTimeoutMs: number } = {
     baseUrl: normalizeBaseUrl(dependencies.baseUrl),
-    apiKey: dependencies.apiKey
+    apiKey: dependencies.apiKey,
+    requestTimeoutMs
   };
   const fetchImpl = dependencies.fetchImpl ?? fetch;
   const server = new McpServer({ name: "scriverse-local-bridge", version: APP_VERSION });
