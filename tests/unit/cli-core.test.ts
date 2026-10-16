@@ -129,7 +129,9 @@ describe("Scriverse CLI 核心", () => {
       }
     });
     expect(JSON.parse(stdout.text())).toMatchObject({ authenticated: true, apiKeyPrefix: "scrv_test" });
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
     expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({
       version: 2,
       defaultServer: "http://127.0.0.1:13210",
