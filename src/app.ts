@@ -45,6 +45,7 @@ import {
   aiWriteToolLabels,
   aiWriteToolsUpdateSchema,
   answerAiUserQuestionSchema,
+  createChapterWritePlanInputSchema,
   resolveAiWritePlanMaxOperations,
   type PlanViewer
 } from "./ai-write-plans.js";
@@ -4241,6 +4242,22 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       })
     });
   });
+  app.post("/api/works/:workId/ai/write-plans/chapter-content", (request, response) => {
+    const input = parse(createChapterWritePlanInputSchema, request.body ?? {});
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "chapter.write-plan.prepare",
+      input,
+      () => aiWritePlanManager.createChapterWritePlan({
+        workId: request.params.workId,
+        initiator: planViewer(),
+        ...input
+      }),
+      201
+    );
+  });
   app.get("/api/works/:workId/ai/write-plans/:planId", (request, response) => {
     data(response, aiWritePlanManager.getPlanDetail(request.params.planId, request.params.workId, planViewer()));
   });
@@ -4251,7 +4268,15 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     data(response, aiWritePlanManager.rejectPlan(request.params.planId, request.params.workId, planViewer()));
   });
   app.post("/api/works/:workId/ai/write-plans/:planId/undo", (request, response) => {
-    data(response, aiWritePlanManager.createUndoPlan(request.params.planId, request.params.workId, planViewer()), 201);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "write-plan.undo.prepare",
+      { sourcePlanId: request.params.planId },
+      () => aiWritePlanManager.createUndoPlan(request.params.planId, request.params.workId, planViewer()),
+      201
+    );
   });
 
   app.get("/api/works/:workId/ai/questions", (request, response) => {

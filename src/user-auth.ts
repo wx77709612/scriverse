@@ -1250,7 +1250,10 @@ const cliApiRules: Array<{ methods: string[]; path: RegExp }> = [
   { methods: ["PATCH"], path: /^\/api\/ai-conversations\/[^/]+\/title$/u },
   { methods: ["GET"], path: /^\/api\/works\/[^/]+\/ai\/questions$/u },
   { methods: ["GET"], path: /^\/api\/works\/[^/]+\/ai\/questions\/[^/]+$/u },
-  { methods: ["POST"], path: /^\/api\/works\/[^/]+\/ai\/questions\/[^/]+\/(?:answer|reject)$/u }
+  { methods: ["POST"], path: /^\/api\/works\/[^/]+\/ai\/questions\/[^/]+\/(?:answer|reject)$/u },
+  { methods: ["GET"], path: /^\/api\/works\/[^/]+\/ai\/write-plans\/[^/]+$/u },
+  { methods: ["POST"], path: /^\/api\/works\/[^/]+\/ai\/write-plans\/chapter-content$/u },
+  { methods: ["POST"], path: /^\/api\/works\/[^/]+\/ai\/write-plans\/[^/]+\/(?:confirm|reject|undo)$/u }
 ];
 
 export function createCliApiScopeMiddleware(disabled = false): RequestHandler {
@@ -1482,6 +1485,9 @@ export function workModuleRequirements(request: Request, write: boolean, annotat
     return write ? { write: ["ai-settings"] } : { read: ["ai-settings"] };
   }
   // 审批中心与提问接口：属于 AI 对话交互面；受影响模块的真实权限在执行前由计划引擎再校验。
+  if (write && /^\/api\/works\/[^/]+\/ai\/write-plans\/chapter-content$/u.test(pathname)) {
+    return { write: ["ai-chat", "prose"] };
+  }
   if (/^\/api\/works\/[^/]+\/ai\/(?:write-plans|questions)(?:\/|$)/u.test(pathname)) {
     return write ? { write: ["ai-chat"] } : { read: ["ai-chat"] };
   }

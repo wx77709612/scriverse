@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AiWritePlanManager,
+  aiWritePlanOperationToolSchemas,
   buildFieldDiffs,
   createAiWritePlanInputSchema,
   intersectWorkModulePermissions,
@@ -253,6 +254,104 @@ describe("AiWritePlanManager 工具开关与审批流水线", () => {
   function enableTools(workId: string, toolIds: string[]): void {
     manager.updateToolSettings(workId, Object.fromEntries(toolIds.map((toolId) => [toolId, true])) as never, null);
   }
+
+  it("正文 Write Plan 仅通过专用入口创建且不会暴露给第三方模型工具 Schema", async () => {
+    const schemas = aiWritePlanOperationToolSchemas({
+      settings: true,
+      characters: true,
+      races: true,
+      organizations: true,
+      timeline: true,
+      relationships: true,
+      outlines: true,
+      annotations: true,
+      analysis_tasks: true,
+      ask_user_questions: true
+    });
+    expect(JSON.stringify(schemas)).not.toContain('"entityType":{"type":"string","enum":["chapter"]}');
+
+    const { work, chapter } = await seedChapter(runtime, "旧正文第一行。\n旧正文第二行。");
+    const workId = String(work.id);
+    const chapterId = String(chapter.id);
+    const plan = manager.createChapterWritePlan({
+      workId,
+      chapterId,
+      initiator: null,
+      summary: "改写第一章开场",
+      content: "新正文第一行。\n新正文第二行。",
+      expectedVersionNo: Number(chapter.versionNo),
+      changeNote: "调整开场节奏"
+    });
+
+    expect(plan).toMatchObject({ status: "pending", operationCount: 1 });
+    expect(plan.operations[0]).toMatchObject({
+      opType: "update_entry",
+      module: "prose",
+      entityType: "chapter",
+      entityId: chapterId,
+      targetVersionNo: Number(chapter.versionNo),
+      title: chapter.title
+    });
+    expect(plan.operations[0]?.fields).toEqual([
+      expect.objectContaining({
+        key: "content",
+        label: "正文",
+        before: "旧正文第一行。\n旧正文第二行。",
+        after: "新正文第一行。\n新正文第二行。",
+        changed: true
+      })
+    ]);
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({
+      content: "旧正文第一行。\n旧正文第二行。",
+      versionNo: chapter.versionNo
+    });
+
+    const executed = await manager.confirmPlan(plan.id, workId, null);
+    expect(executed.status).toBe("executed");
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({
+      content: "新正文第一行。\n新正文第二行。",
+      versionNo: Number(chapter.versionNo) + 1
+    });
+    await expect(manager.confirmPlan(plan.id, workId, null)).rejects.toMatchObject({ code: "AI_PLAN_ALREADY_DECIDED" });
+
+    const undoPlan = manager.createUndoPlan(plan.id, workId, null);
+    expect(undoPlan).toMatchObject({ kind: "undo", status: "pending", sourcePlanId: plan.id });
+    expect(runtime.store.getChapter(chapterId).content).toBe("新正文第一行。\n新正文第二行。");
+    const undone = await manager.confirmPlan(undoPlan.id, workId, null);
+    expect(undone.status).toBe("executed");
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({
+      content: "旧正文第一行。\n旧正文第二行。",
+      versionNo: Number(chapter.versionNo) + 2
+    });
+  });
+
+  it("正文 Write Plan 被拒绝或目标版本漂移时不会覆盖章节", async () => {
+    const { work, chapter } = await seedChapter(runtime, "初始正文");
+    const workId = String(work.id);
+    const chapterId = String(chapter.id);
+    const rejectedPlan = manager.createChapterWritePlan({
+      workId,
+      chapterId,
+      initiator: null,
+      summary: "不会应用的改写",
+      content: "被拒绝的正文",
+      expectedVersionNo: Number(chapter.versionNo)
+    });
+    expect(manager.rejectPlan(rejectedPlan.id, workId, null).status).toBe("rejected");
+    expect(runtime.store.getChapter(chapterId).content).toBe("初始正文");
+
+    const stalePlan = manager.createChapterWritePlan({
+      workId,
+      chapterId,
+      initiator: null,
+      summary: "将会失效的改写",
+      content: "过期正文",
+      expectedVersionNo: Number(chapter.versionNo)
+    });
+    runtime.store.saveChapter(chapterId, { content: "人工最新正文" }, "manual", null, "人工修改", Number(chapter.versionNo));
+    await expect(manager.confirmPlan(stalePlan.id, workId, null)).rejects.toMatchObject({ code: "AI_PLAN_INVALIDATED" });
+    expect(runtime.store.getChapter(chapterId).content).toBe("人工最新正文");
+  });
 
   it("工具开关默认全关，创建计划前必须逐个开启", async () => {
     const work = await runtime.store.createWork({ title: "审批作品", author: "测试作者" });

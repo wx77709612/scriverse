@@ -36,12 +36,94 @@ describe("AI 可写工具与审批中心 API", () => {
 
     it("审批中心与提问接口按 AI 对话模块校验", () => {
       expect(workModuleRequirements(fakeRequest(`/api/works/${workId}/ai/write-plans`), false)).toEqual({ read: ["ai-chat"] });
+      expect(workModuleRequirements(fakeRequest(`/api/works/${workId}/ai/write-plans/chapter-content`), true)).toEqual({ write: ["ai-chat", "prose"] });
       expect(workModuleRequirements(fakeRequest(`/api/works/${workId}/ai/write-plans/p1/confirm`), true)).toEqual({ write: ["ai-chat"] });
       expect(workModuleRequirements(fakeRequest(`/api/works/${workId}/ai/write-plans/p1/undo`), true)).toEqual({ write: ["ai-chat"] });
       expect(workModuleRequirements(fakeRequest(`/api/works/${workId}/ai/questions`), false)).toEqual({ read: ["ai-chat"] });
       expect(workModuleRequirements(fakeRequest(`/api/works/${workId}/ai/questions/q1/answer`), true)).toEqual({ write: ["ai-chat"] });
       expect(workModuleRequirements(fakeRequest(`/api/works/${workId}/ai/questions/q1/reject`), true)).toEqual({ write: ["ai-chat"] });
     });
+  });
+
+  it("章节正文计划通过 HTTP 预览、确认和二次确认撤销", async () => {
+    const chapterRow = runtime.database.get<{ id: string }>("SELECT id FROM chapters WHERE work_id = ?", workId)!;
+    const chapter = runtime.store.getChapter(chapterRow.id);
+    const chapterId = String(chapter.id);
+    const initialVersionNo = Number(chapter.versionNo);
+    const input = {
+      chapterId,
+      content: "经 ChatGPT 调整后的第一段。\n第二段保留。",
+      expectedVersionNo: initialVersionNo,
+      summary: "调整第一章开场",
+      changeNote: "增强开场张力"
+    };
+    const first = await request(runtime.app)
+      .post(`/api/works/${workId}/ai/write-plans/chapter-content`)
+      .send(input)
+      .expect(201);
+    expect(first.body.data).toMatchObject({ status: "pending", operationCount: 1 });
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({
+      content: "第一段。\n第二段。",
+      versionNo: initialVersionNo
+    });
+
+    expect(runtime.database.get<{ count: number }>("SELECT COUNT(*) AS count FROM ai_write_plans WHERE work_id = ?", workId)?.count).toBe(1);
+
+    const confirmed = await request(runtime.app)
+      .post(`/api/works/${workId}/ai/write-plans/${first.body.data.id}/confirm`)
+      .expect(200);
+    expect(confirmed.body.data.status).toBe("executed");
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({
+      content: input.content,
+      versionNo: initialVersionNo + 1
+    });
+
+    const undo = await request(runtime.app)
+      .post(`/api/works/${workId}/ai/write-plans/${first.body.data.id}/undo`)
+      .expect(201);
+    expect(runtime.store.getChapter(chapterId).content).toBe(input.content);
+
+    await request(runtime.app)
+      .post(`/api/works/${workId}/ai/write-plans/${undo.body.data.id}/confirm`)
+      .expect(200);
+    expect(runtime.store.getChapter(chapterId)).toMatchObject({
+      content: "第一段。\n第二段。",
+      versionNo: initialVersionNo + 2
+    });
+  });
+
+  it("章节正文计划拒绝跨作品、陈旧版本和未知字段", async () => {
+    const chapterRow = runtime.database.get<{ id: string }>("SELECT id FROM chapters WHERE work_id = ?", workId)!;
+    const chapter = runtime.store.getChapter(chapterRow.id);
+    const other = await seedChapter(runtime, "另一部作品正文");
+    await request(runtime.app)
+      .post(`/api/works/${workId}/ai/write-plans/chapter-content`)
+      .send({
+        chapterId: other.chapter.id,
+        content: "跨作品正文",
+        expectedVersionNo: other.chapter.versionNo,
+        summary: "不允许跨作品"
+      })
+      .expect(403);
+    await request(runtime.app)
+      .post(`/api/works/${workId}/ai/write-plans/chapter-content`)
+      .send({
+        chapterId: chapter.id,
+        content: "陈旧版本正文",
+        expectedVersionNo: Number(chapter.versionNo) + 1,
+        summary: "不允许陈旧版本"
+      })
+      .expect(409);
+    await request(runtime.app)
+      .post(`/api/works/${workId}/ai/write-plans/chapter-content`)
+      .send({
+        chapterId: chapter.id,
+        content: "未知字段正文",
+        expectedVersionNo: chapter.versionNo,
+        summary: "严格校验",
+        unknown: true
+      })
+      .expect(400);
   });
 
   it("工具开关默认全关，PUT 接口可以增量开启并持久化", async () => {

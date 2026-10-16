@@ -561,6 +561,66 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "chapter.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建章节正文计划和撤销计划且保留真实操作者", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_chapter_write_plan");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const volume = runWithRequestActor(fixture.user, () => runtime.store.createVolume(fixture.workId, { title: "第一卷" }));
+    const chapter = runWithRequestActor(fixture.user, () => runtime.store.createChapter(fixture.workId, {
+      volumeId: String(volume.id),
+      title: "第一章",
+      content: "旧正文"
+    }));
+    const payload = {
+      chapterId: chapter.id,
+      content: "由 ChatGPT 插件准备的新正文",
+      expectedVersionNo: chapter.versionNo,
+      summary: "更新第一章正文",
+      changeNote: "调整开场"
+    };
+    const created = await request(runtime.app)
+      .post(`/api/works/${fixture.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-chapter-plan-create-0001")
+      .send(payload)
+      .expect(201);
+    const replayed = await request(runtime.app)
+      .post(`/api/works/${fixture.workId}/ai/write-plans/chapter-content`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-chapter-plan-create-0001")
+      .send(payload)
+      .expect(201);
+    expect(replayed.headers["idempotency-replayed"]).toBe("true");
+    expect(replayed.body.data.id).toBe(created.body.data.id);
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM ai_write_plans WHERE work_id = ?", fixture.workId)).toEqual({ count: 1 });
+
+    await request(runtime.app)
+      .post(`/api/works/${fixture.workId}/ai/write-plans/${created.body.data.id}/confirm`)
+      .set("Authorization", authorization)
+      .expect(200);
+    expect(runtime.store.getChapter(String(chapter.id))).toMatchObject({ content: payload.content, versionNo: Number(chapter.versionNo) + 1 });
+    expect(runtime.database.get(
+      "SELECT created_by_user_id FROM chapter_versions WHERE chapter_id = ? AND version_no = ?",
+      chapter.id,
+      Number(chapter.versionNo) + 1
+    )).toEqual({ created_by_user_id: fixture.user.userId });
+
+    const undo = await request(runtime.app)
+      .post(`/api/works/${fixture.workId}/ai/write-plans/${created.body.data.id}/undo`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-chapter-plan-undo-0001")
+      .expect(201);
+    const undoReplay = await request(runtime.app)
+      .post(`/api/works/${fixture.workId}/ai/write-plans/${created.body.data.id}/undo`)
+      .set("Authorization", authorization)
+      .set("Idempotency-Key", "mcp-chapter-plan-undo-0001")
+      .expect(201);
+    expect(undoReplay.headers["idempotency-replayed"]).toBe("true");
+    expect(undoReplay.body.data.id).toBe(undo.body.data.id);
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM ai_write_plans WHERE work_id = ?", fixture.workId)).toEqual({ count: 2 });
+  });
+
   it("幂等创建章节大纲并阻止用新创建请求覆盖已有大纲", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

@@ -259,6 +259,9 @@ export const AI_ENTRY_ENTITY_TYPES = [
 
 export type AiEntryEntityType = (typeof AI_ENTRY_ENTITY_TYPES)[number];
 
+/** 审批存储层允许的词条类型；chapter 仅供 MCP 专用正文计划使用。 */
+type StoredEntryEntityType = AiEntryEntityType | "chapter";
+
 const entryEntityTypeSchema = z.enum(AI_ENTRY_ENTITY_TYPES);
 
 const entryEntitySchemas = {
@@ -460,6 +463,17 @@ export const createAiWritePlanInputSchema = z.object({
 
 export type CreateAiWritePlanInput = z.infer<typeof createAiWritePlanInputSchema>;
 
+/** ChatGPT 插件/MCP 专用的章节正文计划输入，不属于第三方模型工具 Schema。 */
+export const createChapterWritePlanInputSchema = z.object({
+  chapterId: identifierSchema,
+  content: z.string().max(2_000_000),
+  expectedVersionNo: z.number().int().positive(),
+  summary: z.string().trim().min(1).max(2000),
+  changeNote: z.string().trim().max(2000).optional()
+}).strict();
+
+export type CreateChapterWritePlanInput = z.infer<typeof createChapterWritePlanInputSchema>;
+
 /** 单次工具调用可批量提出 1-5 个问题，每题包含 2-6 个预设选项。 */
 export const MIN_AI_QUESTIONS_PER_CALL = 1;
 export const MAX_AI_QUESTIONS_PER_CALL = 5;
@@ -520,6 +534,10 @@ export function aiEntryEntityTypeLabel(entityType: AiEntryEntityType): string {
     case "chapter-outline": return "章节大纲";
     case "foreshadow": return "伏笔";
   }
+}
+
+function storedEntryEntityTypeLabel(entityType: StoredEntryEntityType): string {
+  return entityType === "chapter" ? "章节正文" : aiEntryEntityTypeLabel(entityType);
 }
 
 const opTypeLabels: Record<string, string> = {
@@ -1497,7 +1515,10 @@ export class AiWritePlanManager {
 
   // --------------------------------------------------------------- 版本定位
 
-  private currentEntityVersionNo(entityType: AiEntryEntityType, entityId: string): number | null {
+  private currentEntityVersionNo(entityType: StoredEntryEntityType, entityId: string): number | null {
+    if (entityType === "chapter") {
+      return Number(this.store.getChapter(entityId).versionNo);
+    }
     if (entityType === "character") {
       const row = this.database.get<{ version_no: number | null }>(
         "SELECT MAX(version_no) AS version_no FROM character_versions WHERE character_id = ?",
@@ -1672,6 +1693,114 @@ export class AiWritePlanManager {
     });
     logger.info("ai_write_plan.created", { workId, planId, operations: prepared.length });
     return this.getPlanDetail(planId, workId, input.initiator);
+  }
+
+  /**
+   * 为 ChatGPT 插件/MCP 创建章节正文变更计划。
+   *
+   * 该入口不经过第三方模型可见的通用操作 Schema，也不依赖 AI 供应商工具开关；
+   * 它只固化预览和目标版本，正文必须在后续确认时才会写入。
+   */
+  createChapterWritePlan(input: CreateChapterWritePlanInput & {
+    workId: string;
+    initiator: PlanViewer;
+  }): PlanDetailView {
+    const parsed = createChapterWritePlanInputSchema.safeParse({
+      chapterId: input.chapterId,
+      content: input.content,
+      expectedVersionNo: input.expectedVersionNo,
+      summary: input.summary,
+      ...(input.changeNote === undefined ? {} : { changeNote: input.changeNote })
+    });
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0];
+      throw new AppError(400, "AI_CHAPTER_PLAN_INVALID", issue?.message ?? "章节正文计划输入无效");
+    }
+    this.store.getWork(input.workId);
+    const chapter = this.store.getChapter(parsed.data.chapterId);
+    if (String(chapter.workId) !== input.workId) throw crossWorkError();
+    const permissions = this.livePermissions(input.initiator, input.workId);
+    if (!canWriteWorkModule(permissions, "prose")) {
+      throw new AppError(403, "WORK_MODULE_WRITE_DENIED", "你没有编辑“正文”模块的权限");
+    }
+    const currentVersionNo = Number(chapter.versionNo);
+    if (currentVersionNo !== parsed.data.expectedVersionNo) {
+      throw new AppError(
+        409,
+        "VERSION_CONFLICT",
+        `章节已被其他操作更新（期望版本 ${parsed.data.expectedVersionNo}，当前版本 ${currentVersionNo}），请刷新后重试`
+      );
+    }
+    const beforeContent = String(chapter.content);
+    if (beforeContent === parsed.data.content) {
+      throw new AppError(400, "AI_CHAPTER_PLAN_NO_CHANGES", "章节正文没有发生变化，无需创建审批计划");
+    }
+
+    const planId = randomId("aiPlan");
+    const operationId = randomId("aiPlanOp");
+    const timestamp = now();
+    const contentDiff = lineDiff(beforeContent, parsed.data.content);
+    const detail = {
+      affectedModule: "prose",
+      affectedModuleLabel: workPermissionModuleLabels.prose,
+      targetTypeLabel: "章节正文",
+      action: "编辑",
+      target: String(chapter.title),
+      title: String(chapter.title),
+      targetVersionNo: currentVersionNo,
+      changeNote: parsed.data.changeNote ?? "通过 ChatGPT 插件更新章节正文",
+      versionSnapshot: [],
+      fields: [{
+        key: "content",
+        label: "正文",
+        beforeRaw: beforeContent,
+        before: beforeContent,
+        after: parsed.data.content,
+        changed: true,
+        lines: summarizeLineChanges(contentDiff),
+        linePreview: contentDiff.slice(0, 40)
+      }]
+    };
+    this.database.transaction(() => {
+      this.database.run(
+        `INSERT INTO ai_write_plans (
+          id, work_id, conversation_id, plan_kind, status, ai_summary, max_operations,
+          initiator_user_id, conversation_owner_user_id, created_at
+        ) VALUES (?, ?, NULL, 'write', 'pending', ?, 1, ?, ?, ?)`,
+        planId,
+        input.workId,
+        parsed.data.summary,
+        input.initiator?.userId ?? null,
+        input.initiator?.userId ?? null,
+        timestamp
+      );
+      this.database.run(
+        `INSERT INTO ai_write_plan_operations (
+          id, plan_id, seq, op_type, module, entity_type, entity_id, target_version_no, title,
+          operation_input_json, detail_json, required_modules_json
+        ) VALUES (?, ?, 1, 'update_entry', 'prose', 'chapter', ?, ?, ?, ?, ?, ?)`,
+        operationId,
+        planId,
+        parsed.data.chapterId,
+        currentVersionNo,
+        String(chapter.title),
+        JSON.stringify({
+          opType: "update_entry",
+          entityType: "chapter",
+          entityId: parsed.data.chapterId,
+          input: { content: parsed.data.content }
+        }),
+        JSON.stringify(detail),
+        JSON.stringify(["prose"])
+      );
+    });
+    this.store.audit(input.workId, "mcp.chapter_write_plan.created", "ai_write_plan", planId, {
+      chapterId: parsed.data.chapterId,
+      expectedVersionNo: currentVersionNo,
+      createdBy: input.initiator?.userId ?? null
+    });
+    logger.info("mcp.chapter_write_plan.created", { workId: input.workId, planId, chapterId: parsed.data.chapterId });
+    return this.getPlanDetail(planId, input.workId, input.initiator);
   }
 
   /** 创建期的单个操作准备：工具开关、版本、diff 与目标标题都在这里定型。 */
@@ -2111,9 +2240,11 @@ export class AiWritePlanManager {
         }
       }
       // ---- 再校验 2：工具开关仍然开启（R7/R13）。
-      const requirement = requirementForStoredOperation(operation);
-      if (!this.getEnabledTools(row.work_id)[requirement.toolId]) {
-        return { ok: false, reason: `执行前校验失败：「${aiWriteToolLabels[requirement.toolId]}」工具已被关闭（操作 ${operation.seq}）` };
+      if (operation.entity_type !== "chapter") {
+        const requirement = requirementForStoredOperation(operation);
+        if (!this.getEnabledTools(row.work_id)[requirement.toolId]) {
+          return { ok: false, reason: `执行前校验失败：「${aiWriteToolLabels[requirement.toolId]}」工具已被关闭（操作 ${operation.seq}）` };
+        }
       }
       const detail = json<Record<string, unknown>>(operation.detail_json, {});
       const versionSnapshot = Array.isArray(detail.versionSnapshot)
@@ -2135,7 +2266,7 @@ export class AiWritePlanManager {
       }
       // ---- 再校验 3：目标对象与版本没有变化（R10/R13）。
       if (operation.op_type === "update_entry" && operation.entity_type && operation.entity_id) {
-        const entityType = operation.entity_type as AiEntryEntityType;
+        const entityType = operation.entity_type as StoredEntryEntityType;
         const currentVersionNo = this.currentEntityVersionNo(entityType, operation.entity_id);
         const expected = operation.target_version_no;
         // 章节大纲允许“计划时不存在”的编辑计划（upsert 语义）：要求此刻仍不存在。
@@ -2144,7 +2275,7 @@ export class AiWritePlanManager {
           const target = { title: operation.title };
           return {
             ok: false,
-            reason: `执行前校验失败：「${target.title || aiEntryEntityTypeLabel(entityType)}」已发生变化，请让 AI 重新提交计划（版本 ${expected ?? "?"} -> ${currentVersionNo ?? "不存在"}，操作 ${operation.seq}）`
+            reason: `执行前校验失败：「${target.title || storedEntryEntityTypeLabel(entityType)}」已发生变化，请重新提交计划（版本 ${expected ?? "?"} -> ${currentVersionNo ?? "不存在"}，操作 ${operation.seq}）`
           };
         }
       }
@@ -2218,12 +2349,22 @@ export class AiWritePlanManager {
         : this.currentEntityVersionNoAfterWrite(entityType, resultEntityId);
       resultSummary = `已创建${aiEntryEntityTypeLabel(entityType)}「${operation.title}」`;
     } else if (operation.op_type === "update_entry") {
-      const entityType = operation.entity_type as AiEntryEntityType;
+      const entityType = operation.entity_type as StoredEntryEntityType;
       const entityId = String(operation.entity_id);
       const entityInput = stripMetadata(input.input) as never;
       const expectedVersionNo = operation.target_version_no === null ? undefined : operation.target_version_no;
       const undoPayload = prepareUndoPayload(detail, entityType, entityId);
       switch (entityType) {
+        case "chapter":
+          this.store.saveChapter(
+            entityId,
+            { content: String((entityInput as { content?: unknown }).content ?? "") },
+            "ai",
+            sourceRef,
+            String(detail.changeNote ?? changeNote),
+            expectedVersionNo
+          );
+          break;
         case "setting":
           this.store.updateSetting(entityId, entityInput, "ai", sourceRef, changeNote, expectedVersionNo);
           break;
@@ -2253,10 +2394,8 @@ export class AiWritePlanManager {
           break;
       }
       resultEntityId = entityId;
-      resultVersionNo = entityType === "chapter-outline"
-        ? this.currentEntityVersionNo(entityType, entityId)
-        : this.currentEntityVersionNo(entityType, entityId);
-      resultSummary = `已更新${aiEntryEntityTypeLabel(entityType)}「${operation.title}」（版本 ${resultVersionNo ?? "?"}）`;
+      resultVersionNo = this.currentEntityVersionNo(entityType, entityId);
+      resultSummary = `已更新${storedEntryEntityTypeLabel(entityType)}「${operation.title}」（版本 ${resultVersionNo ?? "?"}）`;
       if (undoPayload) {
         this.database.run(
           "UPDATE ai_write_plan_operations SET detail_json = ? WHERE id = ?",
@@ -2361,7 +2500,7 @@ export class AiWritePlanManager {
       const reversible = operation.op_type === "update_entry"
         && operation.result_entity_id
         && operation.result_version_no !== null
-        && this.currentEntityVersionNo(operation.entity_type as AiEntryEntityType, String(operation.result_entity_id)) === operation.result_version_no;
+        && this.currentEntityVersionNo(operation.entity_type as StoredEntryEntityType, String(operation.result_entity_id)) === operation.result_version_no;
       if (reversible) eligibleOps.push({ seq: operation.seq, title: operation.title });
       else if (operation.op_type === "create_entry") {
         skippedOps.push({ seq: operation.seq, title: operation.title, reason: "AI 新建的条目不支持通过撤销删除" });
@@ -2415,7 +2554,7 @@ export class AiWritePlanManager {
         if (String(operation.op_type) !== "update_entry") continue;
         if (!operation.result_entity_id || operation.result_version_no === null) continue;
         if (String(undoPayload.entityId) !== String(operation.result_entity_id)) continue;
-        const entityType = operation.entity_type as AiEntryEntityType;
+        const entityType = operation.entity_type as StoredEntryEntityType;
         titles.push(`#${operation.seq} ${operation.title}`);
         this.database.run(
           `INSERT INTO ai_write_plan_operations (
@@ -2433,7 +2572,7 @@ export class AiWritePlanManager {
           JSON.stringify({ opType: "update_entry", entityType, entityId: operation.result_entity_id, input: undoPayload.beforeFields }),
           JSON.stringify({
             affectedModule: operation.module,
-            targetTypeLabel: aiEntryEntityTypeLabel(entityType),
+            targetTypeLabel: storedEntryEntityTypeLabel(entityType),
             action: "撤销",
             target: operation.title,
             revertedFromPlanId: sourcePlanId,
@@ -2944,7 +3083,7 @@ function requirementForStoredOperation(operation: OperationRow): PlanOperationRe
  */
 function prepareUndoPayload(
   detail: Record<string, unknown>,
-  entityType: AiEntryEntityType,
+  entityType: StoredEntryEntityType,
   entityId: string
 ): { undoJson: Record<string, unknown>; beforeFields: Record<string, unknown>; entityId: string } | null {
   void entityType;
