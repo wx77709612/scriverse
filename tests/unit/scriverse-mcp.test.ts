@@ -635,6 +635,22 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/foreshadows/foreshadow-1/occurrences") {
+        const { expectedVersionNo: _expectedVersionNo, ...input } = body as Record<string, unknown>;
+        response.end(JSON.stringify({
+          data: {
+            id: "occurrence-3",
+            foreshadowId: "foreshadow-1",
+            workId: "work-1",
+            chapterTitle: "第二十六章 归航",
+            volumeId: "volume-1",
+            volumeTitle: "第一卷",
+            foreshadowVersionNo: 5,
+            ...input
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -729,7 +745,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_volume",
       "create_chapter",
       "set_chapter_outline",
-      "create_foreshadow"
+      "create_foreshadow",
+      "add_foreshadow_occurrence"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2207,6 +2224,64 @@ describe("Scriverse MCP Bridge", () => {
         title: "航海钟上的陌生坐标",
         plannedPayoffChapterId: "chapter-26",
         occurrences: [expect.objectContaining({ chapterId: "chapter-26", role: "setup" })]
+      })
+    });
+  });
+
+  it("为已有伏笔添加带版本保护的章节出现位置", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "add_foreshadow_occurrence",
+      arguments: {
+        foreshadowId: "foreshadow-1",
+        chapterId: "chapter-26",
+        role: "payoff",
+        note: "沈砚用坐标开启灰烬门。",
+        evidence: [{ source: "chapter", quote: "钟针重新转动。" }],
+        expectedVersionNo: 4,
+        idempotencyKey: "foreshadow-occurrence-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      occurrence: {
+        id: "occurrence-3",
+        foreshadowId: "foreshadow-1",
+        workId: "work-1",
+        chapterId: "chapter-26",
+        chapterTitle: "第二十六章 归航",
+        volumeId: "volume-1",
+        volumeTitle: "第一卷",
+        role: "payoff",
+        note: "沈砚用坐标开启灰烬门。",
+        evidence: [{ source: "chapter", quote: "钟针重新转动。" }],
+        foreshadowVersionNo: 5
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "foreshadow-occurrence",
+        entityId: "occurrence-3",
+        title: "第二十六章 归航",
+        versionNo: 5,
+        module: "outlines",
+        relatedEntityIds: {
+          foreshadowId: "foreshadow-1",
+          chapterId: "chapter-26",
+          volumeId: "volume-1"
+        }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/foreshadows/foreshadow-1/occurrences",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "foreshadow-occurrence-create-0001",
+      body: expect.objectContaining({
+        chapterId: "chapter-26",
+        role: "payoff",
+        expectedVersionNo: 4
       })
     });
   });

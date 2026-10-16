@@ -655,6 +655,72 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "foreshadow.created", user_id: fixture.user.userId });
   });
 
+  it("幂等添加伏笔出现位置并校验父实体版本与章节归属", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_foreshadow_occurrence");
+    const otherFixture = await registerFixture(runtime, "idempotent_foreshadow_occurrence_other");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const volume = runWithRequestActor(fixture.user, () => runtime.store.createVolume(fixture.workId, { title: "第一卷" }));
+    const chapter = runWithRequestActor(fixture.user, () => runtime.store.createChapter(fixture.workId, {
+      volumeId: String(volume.id),
+      title: "第三章 灰烬门"
+    }));
+    const secondChapter = runWithRequestActor(fixture.user, () => runtime.store.createChapter(fixture.workId, {
+      volumeId: String(volume.id),
+      title: "第四章 回声"
+    }));
+    const otherVolume = runWithRequestActor(otherFixture.user, () => runtime.store.createVolume(otherFixture.workId, { title: "他作分卷" }));
+    const otherChapter = runWithRequestActor(otherFixture.user, () => runtime.store.createChapter(otherFixture.workId, {
+      volumeId: String(otherVolume.id),
+      title: "他作章节"
+    }));
+    const foreshadow = runWithRequestActor(fixture.user, () => runtime.store.createForeshadow(fixture.workId, {
+      title: "航海钟上的陌生坐标"
+    }));
+    const foreshadowId = String(foreshadow.id);
+    const payload = {
+      chapterId: String(chapter.id),
+      role: "payoff",
+      note: "沈砚用坐标开启灰烬门。",
+      evidence: [{ source: "chapter", quote: "钟针重新转动。" }],
+      expectedVersionNo: 1
+    };
+    const created = await request(runtime.app).post(`/api/foreshadows/${foreshadowId}/occurrences`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-occurrence-create-0001").send(payload).expect(201);
+    expect(created.body.data).toMatchObject({
+      foreshadowId,
+      workId: fixture.workId,
+      chapterId: chapter.id,
+      foreshadowVersionNo: 2
+    });
+    const replayed = await request(runtime.app).post(`/api/foreshadows/${foreshadowId}/occurrences`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-occurrence-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/foreshadows/${foreshadowId}/occurrences`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-occurrence-create-0002")
+      .send({ ...payload, expectedVersionNo: 2 }).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "foreshadow-occurrence", chapterId: chapter.id, role: "payoff", versionNo: 2 })] }
+    });
+    await request(runtime.app).post(`/api/foreshadows/${foreshadowId}/occurrences`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-occurrence-foreign-0001")
+      .send({ ...payload, chapterId: otherChapter.id, expectedVersionNo: 2 }).expect(400);
+    await request(runtime.app).post(`/api/foreshadows/${foreshadowId}/occurrences`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-foreshadow-occurrence-stale-0001")
+      .send({ ...payload, chapterId: secondChapter.id, role: "reminder", expectedVersionNo: 1 }).expect(409);
+
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM foreshadow_occurrences WHERE foreshadow_id = ?", foreshadowId)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'foreshadow' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      foreshadowId
+    )).toEqual({ version_no: 2, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'foreshadow.occurrence.created'", created.body.data.id))
+      .toEqual({ action: "foreshadow.occurrence.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

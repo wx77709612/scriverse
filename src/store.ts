@@ -6053,7 +6053,37 @@ export class Store {
       this.audit(String(foreshadow.workId), "foreshadow.occurrence.created", "foreshadow-occurrence", createdId);
       return createdId;
     });
-    return this.getForeshadowOccurrence(occurrenceId);
+    const updatedForeshadow = this.getForeshadow(foreshadowId);
+    return {
+      ...this.getForeshadowOccurrence(occurrenceId),
+      workId: updatedForeshadow.workId,
+      foreshadowVersionNo: updatedForeshadow.versionNo
+    };
+  }
+
+  findForeshadowOccurrenceDuplicateCandidates(
+    foreshadowId: string,
+    input: Pick<ForeshadowOccurrenceInput, "chapterId" | "role">
+  ): Record<string, unknown>[] {
+    const foreshadow = this.getForeshadow(foreshadowId);
+    this.assertChapterInWork(input.chapterId, String(foreshadow.workId));
+    return this.db.all(
+      `SELECT occurrence.*, chapter.title AS chapter_title, chapter.volume_id, volume.title AS volume_title
+       FROM foreshadow_occurrences occurrence
+       JOIN chapters chapter ON chapter.id = occurrence.chapter_id
+       JOIN volumes volume ON volume.id = chapter.volume_id
+       WHERE occurrence.foreshadow_id = ? AND occurrence.chapter_id = ? AND occurrence.role = ?
+       ORDER BY occurrence.updated_at DESC, occurrence.id
+       LIMIT 20`,
+      foreshadowId,
+      input.chapterId,
+      input.role
+    ).map((row) => ({
+      ...this.mapForeshadowOccurrence(row),
+      workId: foreshadow.workId,
+      entityType: "foreshadow-occurrence",
+      versionNo: foreshadow.versionNo
+    }));
   }
 
   updateForeshadowOccurrence(occurrenceId: string, input: Partial<ForeshadowOccurrenceInput>, expectedVersionNo?: number): Record<string, unknown> {

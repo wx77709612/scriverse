@@ -1239,6 +1239,7 @@ const cliApiRules: Array<{ methods: string[]; path: RegExp }> = [
   { methods: ["PATCH", "DELETE"], path: /^\/api\/chapter-annotations\/[^/]+$/u },
   { methods: ["POST"], path: /^\/api\/chapters\/[^/]+\/(?:restore|move|apply-title-number)$/u },
   { methods: ["PUT"], path: /^\/api\/chapters\/[^/]+\/outline$/u },
+  { methods: ["POST"], path: /^\/api\/foreshadows\/[^/]+\/occurrences$/u },
   { methods: ["GET", "PATCH"], path: /^\/api\/(?:drafts|settings|characters|races|organizations|timeline-tracks|timeline|relationships|foreshadows)\/[^/]+$/u },
   { methods: ["GET", "POST"], path: /^\/api\/characters\/[^/]+\/sections$/u },
   { methods: ["GET", "PATCH"], path: /^\/api\/character-sections\/[^/]+$/u },

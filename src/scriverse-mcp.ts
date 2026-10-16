@@ -1580,5 +1580,55 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "add_foreshadow_occurrence",
+    {
+      title: "添加 Scriverse 伏笔出现位置",
+      description: "把已有正式伏笔关联到同一作品的章节，并用伏笔当前版本号防止并发覆盖。疑似重复位置会返回候选；确认仍需保留时可设置 allowDuplicate。",
+      inputSchema: foreshadowOccurrenceInput.extend({
+        foreshadowId: identifier.describe("伏笔 ID"),
+        expectedVersionNo: z.number().int().positive().describe("伏笔当前版本号"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ foreshadowId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const occurrence = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/foreshadows/${encodeURIComponent(foreshadowId)}/occurrences`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        if (!occurrence || typeof occurrence !== "object" || Array.isArray(occurrence)) {
+          throw new Error("Scriverse 伏笔出现位置响应格式无效");
+        }
+        const occurrenceRecord = occurrence as Record<string, unknown>;
+        if (typeof occurrenceRecord.workId !== "string" || typeof occurrenceRecord.foreshadowVersionNo !== "number") {
+          throw new Error("Scriverse 伏笔出现位置响应缺少作品或版本信息");
+        }
+        const creation = creationSummary({
+          ...occurrenceRecord,
+          versionNo: occurrenceRecord.foreshadowVersionNo
+        }, {
+          workId: occurrenceRecord.workId,
+          entityType: "foreshadow-occurrence",
+          module: "outlines",
+          title: typeof occurrenceRecord.chapterTitle === "string" ? occurrenceRecord.chapterTitle : undefined,
+          relatedEntityIds: {
+            foreshadowId: occurrenceRecord.foreshadowId,
+            chapterId: occurrenceRecord.chapterId,
+            volumeId: occurrenceRecord.volumeId
+          }
+        });
+        return result("已添加 Scriverse 伏笔出现位置：", creation, { occurrence, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

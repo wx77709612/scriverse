@@ -2976,8 +2976,21 @@ export function createRuntime(options: RuntimeOptions): Runtime {
   app.post("/api/foreshadows/:foreshadowId/occurrences", (request, response) => {
     const input = parse(foreshadowOccurrenceSchema.extend({ expectedVersionNo: expectedVersionNoSchema }).strict(), request.body);
     const { expectedVersionNo, ...occurrenceInput } = input;
-    const occurrence = store.createForeshadowOccurrence(request.params.foreshadowId, occurrenceInput, expectedVersionNo);
-    data(response, occurrence, 201);
+    const foreshadow = store.getForeshadow(request.params.foreshadowId);
+    if (request.get("Idempotency-Key") !== undefined) {
+      idempotentCreate(
+        request,
+        response,
+        String(foreshadow.workId),
+        "foreshadow-occurrence.create",
+        { foreshadowId: request.params.foreshadowId, input },
+        () => store.createForeshadowOccurrence(request.params.foreshadowId, occurrenceInput, expectedVersionNo),
+        201,
+        () => store.findForeshadowOccurrenceDuplicateCandidates(request.params.foreshadowId, occurrenceInput)
+      );
+      return;
+    }
+    data(response, store.createForeshadowOccurrence(request.params.foreshadowId, occurrenceInput, expectedVersionNo), 201);
   });
   app.patch("/api/foreshadow-occurrences/:occurrenceId", (request, response) => {
     const input = parse(foreshadowOccurrenceSchema.partial().extend({ expectedVersionNo: expectedVersionNoSchema }).strict(), request.body);
