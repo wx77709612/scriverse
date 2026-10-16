@@ -2904,8 +2904,21 @@ export function createRuntime(options: RuntimeOptions): Runtime {
   app.get("/api/chapters/:chapterId/outline", (request, response) => data(response, store.getChapterOutline(request.params.chapterId)));
   app.put("/api/chapters/:chapterId/outline", (request, response) => {
     const { changeNote, expectedVersionNo, ...input } = parse(chapterOutlineSchema.extend({ changeNote: changeNoteSchema, expectedVersionNo: expectedVersionNoSchema }).strict(), request.body);
-    const outline = store.upsertChapterOutline(request.params.chapterId, input, "manual", null, changeNote, expectedVersionNo);
-    data(response, outline);
+    const chapter = store.getChapter(request.params.chapterId);
+    if (request.get("Idempotency-Key") !== undefined) {
+      idempotentCreate(
+        request,
+        response,
+        String(chapter.workId),
+        "chapter-outline.create",
+        { chapterId: request.params.chapterId, input, changeNote, expectedVersionNo },
+        () => store.upsertChapterOutline(request.params.chapterId, input, "manual", null, changeNote, expectedVersionNo),
+        200,
+        () => store.findChapterOutlineDuplicateCandidates(request.params.chapterId)
+      );
+      return;
+    }
+    data(response, store.upsertChapterOutline(request.params.chapterId, input, "manual", null, changeNote, expectedVersionNo));
   });
   app.delete("/api/chapters/:chapterId/outline", (request, response) => {
     const input = parse(z.object({ expectedVersionNo: expectedVersionNoSchema }).strict(), request.body ?? {});

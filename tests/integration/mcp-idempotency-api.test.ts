@@ -561,6 +561,45 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "chapter.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建章节大纲并阻止用新创建请求覆盖已有大纲", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_chapter_outline");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const volume = runWithRequestActor(fixture.user, () => runtime.store.createVolume(fixture.workId, { title: "第一卷" }));
+    const chapter = runWithRequestActor(fixture.user, () => runtime.store.createChapter(fixture.workId, {
+      volumeId: String(volume.id),
+      title: "第一章 归航"
+    }));
+    const chapterId = String(chapter.id);
+    const payload = {
+      goal: "让舰队决定穿越灰烬门。",
+      conflict: "燃料不足。",
+      turningPoint: "旧航标重新亮起。",
+      status: "ready"
+    };
+    const created = await request(runtime.app).put(`/api/chapters/${chapterId}/outline`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-outline-create-0001").send(payload).expect(200);
+    const replayed = await request(runtime.app).put(`/api/chapters/${chapterId}/outline`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-outline-create-0001").send(payload).expect(200);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).put(`/api/chapters/${chapterId}/outline`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-outline-create-0002")
+      .send({ ...payload, goal: "不得静默覆盖的新目标。" }).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ entityType: "chapter-outline", chapterId, versionNo: 1 })] }
+    });
+    expect(runtime.store.getChapterOutline(chapterId)).toMatchObject({ goal: payload.goal, versionNo: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'chapter-outline' AND entity_id = ?",
+      chapterId
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'outline.created'", chapterId))
+      .toEqual({ action: "outline.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

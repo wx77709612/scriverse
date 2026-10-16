@@ -162,7 +162,7 @@ async function requestScriverse(
   config: ScriverseMcpConfig,
   path: string,
   options: {
-    method?: "GET" | "POST";
+    method?: "GET" | "POST" | "PUT" | "PATCH";
     query?: Record<string, string | number | boolean | undefined>;
     body?: Record<string, unknown>;
     idempotencyKey?: string;
@@ -1463,6 +1463,56 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
           }
         });
         return result("已创建 Scriverse 正式章节：", creation, { chapter, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "set_chapter_outline",
+    {
+      title: "设置 Scriverse 章节大纲",
+      description: "为指定章节创建正式大纲。若章节已有大纲则返回候选，不会静默覆盖；修改已有大纲应使用带版本号的安全更新工具。",
+      inputSchema: z.object({
+        chapterId: identifier.describe("章节 ID"),
+        goal: z.string().max(100_000).optional().describe("章节目标"),
+        conflict: z.string().max(100_000).optional().describe("核心冲突"),
+        turningPoint: z.string().max(100_000).optional().describe("转折点"),
+        notes: z.string().max(100_000).optional().describe("大纲备注"),
+        status: z.enum(["draft", "ready", "completed"]).optional().describe("大纲状态"),
+        changeNote: z.string().trim().max(500).optional().describe("创建说明"),
+        idempotencyKey
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ chapterId, idempotencyKey, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const chapterOutline = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/chapters/${encodeURIComponent(chapterId)}/outline`,
+          { method: "PUT", body, idempotencyKey }
+        );
+        if (!chapterOutline || typeof chapterOutline !== "object" || Array.isArray(chapterOutline)) {
+          throw new Error("Scriverse 章节大纲响应格式无效");
+        }
+        const outlineRecord = chapterOutline as Record<string, unknown>;
+        if (typeof outlineRecord.workId !== "string" || typeof outlineRecord.chapterId !== "string") {
+          throw new Error("Scriverse 章节大纲响应缺少作品或章节 ID");
+        }
+        const creation = creationSummary({ ...outlineRecord, id: outlineRecord.chapterId }, {
+          workId: outlineRecord.workId,
+          entityType: "chapter-outline",
+          module: "outlines",
+          title: typeof outlineRecord.chapterTitle === "string" ? outlineRecord.chapterTitle : undefined,
+          relatedEntityIds: {
+            chapterId: outlineRecord.chapterId,
+            volumeId: outlineRecord.volumeId
+          }
+        });
+        return result("已创建 Scriverse 正式章节大纲：", creation, { chapterOutline, creation });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

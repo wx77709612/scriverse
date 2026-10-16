@@ -600,6 +600,19 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "chapter-27", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "PUT" && request.url === "/api/chapters/chapter-26/outline") {
+        response.end(JSON.stringify({
+          data: {
+            chapterId: "chapter-26",
+            workId: "work-1",
+            volumeId: "volume-1",
+            chapterTitle: "第二十六章 归航",
+            versionNo: 1,
+            ...(body as object)
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -692,7 +705,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_timeline_event",
       "create_relationship",
       "create_volume",
-      "create_chapter"
+      "create_chapter",
+      "set_chapter_outline"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2065,6 +2079,55 @@ describe("Scriverse MCP Bridge", () => {
         title: "第二十七章 灰烬门",
         insertAfterChapterId: "chapter-26"
       })
+    });
+  });
+
+  it("为章节创建正式大纲并返回章节关联", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "set_chapter_outline",
+      arguments: {
+        chapterId: "chapter-26",
+        goal: "让舰队决定穿越灰烬门。",
+        conflict: "燃料不足以支持第二次尝试。",
+        turningPoint: "沈砚发现旧航标仍在工作。",
+        notes: "结尾切到故乡视角。",
+        status: "ready",
+        idempotencyKey: "chapter-outline-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      chapterOutline: {
+        chapterId: "chapter-26",
+        workId: "work-1",
+        volumeId: "volume-1",
+        chapterTitle: "第二十六章 归航",
+        versionNo: 1,
+        goal: "让舰队决定穿越灰烬门。",
+        conflict: "燃料不足以支持第二次尝试。",
+        turningPoint: "沈砚发现旧航标仍在工作。",
+        notes: "结尾切到故乡视角。",
+        status: "ready"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "chapter-outline",
+        entityId: "chapter-26",
+        title: "第二十六章 归航",
+        versionNo: 1,
+        module: "outlines",
+        relatedEntityIds: { chapterId: "chapter-26", volumeId: "volume-1" }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "PUT",
+      url: "/api/chapters/chapter-26/outline",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "chapter-outline-create-0001",
+      body: expect.objectContaining({ goal: "让舰队决定穿越灰烬门。", status: "ready" })
     });
   });
 

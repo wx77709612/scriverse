@@ -5232,6 +5232,19 @@ export class Store {
     return this.mapChapterOutline(row, chapter);
   }
 
+  findChapterOutlineDuplicateCandidates(chapterId: string): Record<string, unknown>[] {
+    const outline = this.getChapterOutline(chapterId);
+    if (!outline) return [];
+    return [{
+      id: outline.chapterId,
+      workId: outline.workId,
+      entityType: "chapter-outline",
+      chapterId: outline.chapterId,
+      title: outline.chapterTitle,
+      versionNo: outline.versionNo
+    }];
+  }
+
   getChapterOutlineBoard(workId: string, filters: ChapterOutlineBoardFilters, pagination: Pagination): {
     workId: string;
     volumes: ChapterOutlineBoardVolume[];
