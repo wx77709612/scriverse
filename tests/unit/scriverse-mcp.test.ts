@@ -483,6 +483,29 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/timeline/event-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "event-1",
+            workId: "work-1",
+            trackId: "track-1",
+            name: "灰烬跃迁事故",
+            description: "舰队首次跃迁时遭遇导航偏移。",
+            eventType: "disaster",
+            timeLabel: "新历 17 年",
+            timeSort: 17,
+            chapterIds: ["chapter-1"],
+            participantIds: ["character-1"],
+            location: "灰烬航标",
+            causes: ["校准误差"],
+            impactScope: "organization",
+            evidence: [],
+            status: "confirmed",
+            versionNo: 5
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/relationships?minimumConfidence=0&page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -891,7 +914,8 @@ describe("Scriverse MCP Bridge", () => {
       "update_character",
       "update_character_section",
       "update_race",
-      "update_organization"
+      "update_organization",
+      "update_timeline_event"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2820,6 +2844,61 @@ describe("Scriverse MCP Bridge", () => {
         memberIds: ["character-1"],
         changeNote: "更新组织章程",
         expectedVersionNo: 6
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新时间轴事件", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_timeline_event",
+      arguments: {
+        eventId: "event-1",
+        name: "灰烬跃迁事故",
+        eventType: "disaster",
+        timeSort: 17,
+        chapterIds: ["chapter-1"],
+        participantIds: ["character-1"],
+        status: "confirmed",
+        changeNote: "确认事故影响",
+        expectedVersionNo: 4
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      timelineEvent: {
+        id: "event-1",
+        workId: "work-1",
+        trackId: "track-1",
+        name: "灰烬跃迁事故",
+        description: "舰队首次跃迁时遭遇导航偏移。",
+        eventType: "disaster",
+        timeLabel: "新历 17 年",
+        timeSort: 17,
+        chapterIds: ["chapter-1"],
+        participantIds: ["character-1"],
+        location: "灰烬航标",
+        causes: ["校准误差"],
+        impactScope: "organization",
+        evidence: [],
+        status: "confirmed",
+        versionNo: 5
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/timeline/event-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        name: "灰烬跃迁事故",
+        eventType: "disaster",
+        timeSort: 17,
+        chapterIds: ["chapter-1"],
+        participantIds: ["character-1"],
+        status: "confirmed",
+        changeNote: "确认事故影响",
+        expectedVersionNo: 4
       }
     });
   });

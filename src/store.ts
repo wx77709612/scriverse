@@ -9273,10 +9273,7 @@ export class Store {
     expectedVersionNo?: number
   ): Record<string, unknown> {
     const current = this.getTimelineEvent(eventId);
-    if (input.trackId) {
-      const track = this.getTimelineTrack(input.trackId);
-      if (track.workId !== current.workId) throw new AppError(400, "TIMELINE_TRACK_WORK_MISMATCH", "独立时间轴不属于当前作品");
-    }
+    this.assertTimelineEventReferencesInWork(String(current.workId), input);
     this.db.transaction(() => {
       this.assertExpectedVersion("timeline-event", eventId, expectedVersionNo, "时间事件");
       this.db.run(

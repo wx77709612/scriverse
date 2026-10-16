@@ -263,4 +263,48 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'organization.updated'", organizationId))
       .toEqual({ action: "organization.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新时间轴事件并拒绝跨作品章节和角色", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_timeline_event_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_timeline_event_outsider");
+    const event = runWithRequestActor(owner.user, () => runtime.store.createTimelineEvent(owner.workId, { name: "灰烬跃迁" }));
+    const foreignVolume = runWithRequestActor(outsider.user, () => runtime.store.createVolume(outsider.workId, { title: "他作卷" }));
+    const foreignChapter = runWithRequestActor(outsider.user, () => runtime.store.createChapter(outsider.workId, {
+      volumeId: String(foreignVolume.id),
+      title: "他作章节"
+    }));
+    const foreignCharacter = runWithRequestActor(outsider.user, () => runtime.store.createCharacter(outsider.workId, { name: "异乡人" }));
+    const eventId = String(event.id);
+
+    await request(runtime.app).patch(`/api/timeline/${eventId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ chapterIds: [foreignChapter.id], expectedVersionNo: 1 }).expect(400);
+    await request(runtime.app).patch(`/api/timeline/${eventId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ participantIds: [foreignCharacter.id], expectedVersionNo: 1 }).expect(400);
+
+    const updated = await request(runtime.app).patch(`/api/timeline/${eventId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ name: "灰烬跃迁事故", status: "confirmed", changeNote: "确认事故影响", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: eventId, name: "灰烬跃迁事故", status: "confirmed", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/timeline/${eventId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ description: "不得覆盖的新内容", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/timeline/${eventId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ description: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getTimelineEvent(eventId)).toMatchObject({ name: "灰烬跃迁事故", chapterIds: [], participantIds: [], versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'timeline-event' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      eventId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'timeline.updated'", eventId))
+      .toEqual({ action: "timeline.updated", user_id: owner.user.userId });
+  });
 });

@@ -2047,5 +2047,62 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_timeline_event",
+    {
+      title: "安全更新 Scriverse 时间轴事件",
+      description: "使用当前版本号更新时间轴事件；轨道、章节和参与角色必须属于同一作品，版本冲突会被拒绝。",
+      inputSchema: z.object({
+        eventId: identifier.describe("时间轴事件 ID"),
+        name: z.string().trim().min(1).max(300).optional().describe("事件名称"),
+        trackId: identifier.nullable().optional().describe("同一作品内的时间轴轨道 ID"),
+        description: z.string().max(100_000).optional().describe("事件描述"),
+        eventType: z.string().trim().max(100).optional().describe("事件类型"),
+        timeLabel: z.string().max(300).optional().describe("时间标签"),
+        timeSort: z.number().finite().nullable().optional().describe("时间排序值"),
+        chapterIds: z.array(identifier).max(500).optional().describe("同一作品内的关联章节 ID"),
+        participantIds: z.array(identifier).max(500).optional().describe("同一作品内的参与角色 ID"),
+        location: z.string().max(500).optional().describe("发生地点"),
+        causes: z.array(z.string().trim().min(1).max(1_000)).max(100).optional().describe("事件成因"),
+        impactScope: z.enum(["personal", "organization", "regional", "world", "galaxy"]).optional().describe("影响范围"),
+        evidence: z.array(z.unknown()).max(100).optional().describe("结构化证据"),
+        status: z.enum(["candidate", "pending", "confirmed", "deprecated"]).optional().describe("确认状态"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.name,
+        value.trackId,
+        value.description,
+        value.eventType,
+        value.timeLabel,
+        value.timeSort,
+        value.chapterIds,
+        value.participantIds,
+        value.location,
+        value.causes,
+        value.impactScope,
+        value.evidence,
+        value.status
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项时间轴事件内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ eventId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const timelineEvent = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/timeline/${encodeURIComponent(eventId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 时间轴事件：", timelineEvent, { timelineEvent });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
