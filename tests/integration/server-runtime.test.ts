@@ -415,18 +415,22 @@ describe("本地服务运行时", () => {
     expect(existsSync(databasePath)).toBe(true);
     const masterKeyPath = join(root, "master.key");
     expect(existsSync(masterKeyPath)).toBe(true);
-    expect(statSync(root).mode & 0o777).toBe(0o700);
-    expect(statSync(databasePath).mode & 0o777).toBe(0o600);
-    expect(statSync(masterKeyPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(root).mode & 0o777).toBe(0o700);
+      expect(statSync(databasePath).mode & 0o777).toBe(0o600);
+      expect(statSync(masterKeyPath).mode & 0o777).toBe(0o600);
+    }
     const snapshot = running.runtime.database.createSnapshotBuffer();
     expect(snapshot.subarray(0, 16).toString("utf8")).toBe("SQLite format 3\u0000");
-    for (const sqliteSidecar of [`${databasePath}-wal`, `${databasePath}-shm`]) {
-      if (existsSync(sqliteSidecar)) expect(statSync(sqliteSidecar).mode & 0o777).toBe(0o600);
-    }
+    if (process.platform !== "win32") {
+      for (const sqliteSidecar of [`${databasePath}-wal`, `${databasePath}-shm`]) {
+        if (existsSync(sqliteSidecar)) expect(statSync(sqliteSidecar).mode & 0o777).toBe(0o600);
+      }
 
-    chmodSync(masterKeyPath, 0o644);
-    expect(loadMasterSecret(masterKeyPath)).toHaveLength(43);
-    expect(statSync(masterKeyPath).mode & 0o777).toBe(0o600);
+      chmodSync(masterKeyPath, 0o644);
+      expect(loadMasterSecret(masterKeyPath)).toHaveLength(43);
+      expect(statSync(masterKeyPath).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("关闭服务时主动清理 keep-alive 连接并完成运行时关闭", async () => {
