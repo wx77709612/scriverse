@@ -679,6 +679,22 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PUT" && request.url === "/api/works/work-1/writing-goal") {
+        response.end(JSON.stringify({
+          data: {
+            goal: {
+              ...(body as object),
+              updatedAt: "2026-10-16T01:00:00.000Z"
+            },
+            currentWords: 64000,
+            todayWords: 1800,
+            dailyCompletion: 0.9,
+            totalCompletion: 0.5333,
+            trend: []
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -776,7 +792,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_foreshadow",
       "add_foreshadow_occurrence",
       "create_chapter_comment",
-      "create_review_record"
+      "create_review_record",
+      "set_writing_goal"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2416,6 +2433,48 @@ describe("Scriverse MCP Bridge", () => {
         dedupeKey: "chapter-26-clock-coordinate",
         entityRefs: [{ type: "chapter", id: "chapter-26" }]
       })
+    });
+  });
+
+  it("首次设置写作目标并返回精简结果", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "set_writing_goal",
+      arguments: {
+        workId: "work-1",
+        dailyGoal: 2000,
+        targetTotal: 120000,
+        deadline: "2027-03-01",
+        idempotencyKey: "writing-goal-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      writingGoal: {
+        workId: "work-1",
+        dailyGoal: 2000,
+        targetTotal: 120000,
+        deadline: "2027-03-01",
+        updatedAt: "2026-10-16T01:00:00.000Z"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "writing-goal",
+        entityId: "work-1",
+        title: "写作目标",
+        versionNo: 1,
+        module: "prose",
+        relatedEntityIds: {}
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PUT",
+      url: "/api/works/work-1/writing-goal",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "writing-goal-create-0001",
+      body: { dailyGoal: 2000, targetTotal: 120000, deadline: "2027-03-01" }
     });
   });
 

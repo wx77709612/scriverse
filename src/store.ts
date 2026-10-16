@@ -13550,6 +13550,23 @@ export class Store {
     };
   }
 
+  findWritingGoalDuplicateCandidates(workId: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    const row = this.db.get("SELECT * FROM writing_goals WHERE work_id = ?", workId);
+    if (!row) return [];
+    return [{
+      id: requiredString(row, "work_id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "writing-goal",
+      title: "写作目标",
+      dailyGoal: numberValue(row, "daily_goal"),
+      targetTotal: numberValue(row, "target_total"),
+      deadline: optionalString(row, "deadline"),
+      versionNo: 1,
+      updatedAt: requiredString(row, "updated_at")
+    }];
+  }
+
   updateWritingGoal(workId: string, input: { dailyGoal: number; targetTotal: number; deadline: string | null }): Record<string, unknown> {
     this.getWork(workId);
     const timestamp = now();

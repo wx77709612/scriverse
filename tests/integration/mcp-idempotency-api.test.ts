@@ -805,6 +805,36 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "review.created", user_id: fixture.user.userId });
   });
 
+  it("幂等首次设置写作目标并阻止新创建请求覆盖已有目标", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_writing_goal");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const payload = { dailyGoal: 2000, targetTotal: 120000, deadline: "2027-03-01" };
+    const created = await request(runtime.app).put(`/api/works/${fixture.workId}/writing-goal`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-writing-goal-create-0001").send(payload).expect(200);
+    expect(created.body.data.goal).toMatchObject(payload);
+    const replayed = await request(runtime.app).put(`/api/works/${fixture.workId}/writing-goal`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-writing-goal-create-0001").send(payload).expect(200);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).put(`/api/works/${fixture.workId}/writing-goal`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-writing-goal-create-0002")
+      .send({ ...payload, dailyGoal: 3000 }).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: fixture.workId, entityType: "writing-goal", dailyGoal: 2000, versionNo: 1 })] }
+    });
+    expect(runtime.database.get("SELECT daily_goal, target_total, deadline, updated_by_user_id FROM writing_goals WHERE work_id = ?", fixture.workId)).toEqual({
+      daily_goal: 2000,
+      target_total: 120000,
+      deadline: "2027-03-01",
+      updated_by_user_id: fixture.user.userId
+    });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'work.writing_goal.updated'", fixture.workId))
+      .toEqual({ action: "work.writing_goal.updated", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

@@ -4960,6 +4960,19 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       targetTotal: z.number().int().min(0).max(100_000_000),
       deadline: z.string().date().nullable()
     }).strict(), request.body);
+    if (request.get("Idempotency-Key") !== undefined) {
+      idempotentCreate(
+        request,
+        response,
+        request.params.workId,
+        "writing-goal.create",
+        input,
+        () => store.updateWritingGoal(request.params.workId, input),
+        200,
+        () => store.findWritingGoalDuplicateCandidates(request.params.workId)
+      );
+      return;
+    }
     data(response, store.updateWritingGoal(request.params.workId, input));
   });
 

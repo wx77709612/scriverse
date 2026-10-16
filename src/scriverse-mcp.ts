@@ -1724,5 +1724,54 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "set_writing_goal",
+    {
+      title: "设置 Scriverse 写作目标",
+      description: "为尚未配置目标的作品首次设置每日字数、总字数和截止日期。若已有目标则返回候选，不会静默覆盖；修改已有目标应使用带版本号的安全更新工具。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        dailyGoal: z.number().int().min(0).max(1_000_000).describe("每日目标字数"),
+        targetTotal: z.number().int().min(0).max(100_000_000).describe("作品目标总字数"),
+        deadline: z.string().date().nullable().describe("截止日期；无截止日期时为 null"),
+        idempotencyKey
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, ...input }) => {
+      try {
+        const progress = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/writing-goal`,
+          { method: "PUT", body: input, idempotencyKey }
+        );
+        if (!progress || typeof progress !== "object" || Array.isArray(progress)) {
+          throw new Error("Scriverse 写作目标响应格式无效");
+        }
+        const goal = (progress as Record<string, unknown>).goal;
+        if (!goal || typeof goal !== "object" || Array.isArray(goal)) {
+          throw new Error("Scriverse 写作目标响应缺少 goal 字段");
+        }
+        const writingGoal = { workId, ...(goal as Record<string, unknown>) };
+        const creation = creationSummary({
+          id: workId,
+          workId,
+          versionNo: typeof (goal as Record<string, unknown>).versionNo === "number"
+            ? (goal as Record<string, unknown>).versionNo
+            : 1
+        }, {
+          workId,
+          entityType: "writing-goal",
+          module: "prose",
+          title: "写作目标"
+        });
+        return result("已设置 Scriverse 写作目标：", creation, { writingGoal, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
