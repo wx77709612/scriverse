@@ -1280,5 +1280,57 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_timeline_event",
+    {
+      title: "创建 Scriverse 时间轴事件",
+      description: "把事件写入作品的正式时间轴模块。疑似重名时返回已有候选；确认仍需新增时可设置 allowDuplicate。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        name: z.string().trim().min(1).max(300).describe("事件名称"),
+        trackId: identifier.nullable().optional().describe("同一作品内的时间轴轨道 ID"),
+        description: z.string().max(100_000).optional().describe("事件描述"),
+        eventType: z.string().trim().max(100).optional().describe("事件类型"),
+        timeLabel: z.string().max(300).optional().describe("时间标签"),
+        timeSort: z.number().finite().nullable().optional().describe("时间排序值"),
+        chapterIds: z.array(identifier).max(500).optional().describe("同一作品内的关联章节 ID"),
+        participantIds: z.array(identifier).max(500).optional().describe("同一作品内的参与角色 ID"),
+        location: z.string().max(500).optional().describe("发生地点"),
+        causes: z.array(z.string().trim().min(1).max(1_000)).max(100).optional().describe("事件成因"),
+        impactScope: z.enum(["personal", "organization", "regional", "world", "galaxy"]).optional().describe("影响范围"),
+        evidence: z.array(z.unknown()).max(100).optional().describe("结构化证据"),
+        status: z.enum(["candidate", "pending", "confirmed", "deprecated"]).optional().describe("确认状态"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const timelineEvent = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/timeline`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        const creation = creationSummary(timelineEvent, {
+          workId,
+          entityType: "timeline-event",
+          module: "timeline",
+          name: input.name,
+          relatedEntityIds: {
+            trackId: input.trackId,
+            chapterIds: input.chapterIds,
+            participantIds: input.participantIds
+          }
+        });
+        return result("已创建 Scriverse 时间轴事件：", creation, { timelineEvent, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

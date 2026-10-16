@@ -580,6 +580,11 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "track-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/timeline") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "event-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -668,7 +673,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_character_section",
       "create_race",
       "create_organization",
-      "create_timeline_track"
+      "create_timeline_track",
+      "create_timeline_event"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1815,6 +1821,70 @@ describe("Scriverse MCP Bridge", () => {
         description: "记录舰队返航过程中的关键节点。",
         sortOrder: 2
       }
+    });
+  });
+
+  it("创建正式时间轴事件并保留轨道、章节和参与角色关联", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_timeline_event",
+      arguments: {
+        workId: "work-1",
+        name: "灰烬跃迁",
+        trackId: "track-1",
+        description: "舰队完成首次跨星区跃迁。",
+        eventType: "milestone",
+        timeLabel: "新历 17 年",
+        chapterIds: ["chapter-26"],
+        participantIds: ["character-1"],
+        impactScope: "galaxy",
+        status: "confirmed",
+        idempotencyKey: "timeline-event-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      timelineEvent: {
+        id: "event-2",
+        workId: "work-1",
+        versionNo: 1,
+        name: "灰烬跃迁",
+        trackId: "track-1",
+        description: "舰队完成首次跨星区跃迁。",
+        eventType: "milestone",
+        timeLabel: "新历 17 年",
+        chapterIds: ["chapter-26"],
+        participantIds: ["character-1"],
+        impactScope: "galaxy",
+        status: "confirmed"
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "timeline-event",
+        entityId: "event-2",
+        name: "灰烬跃迁",
+        versionNo: 1,
+        module: "timeline",
+        relatedEntityIds: {
+          trackId: "track-1",
+          chapterIds: ["chapter-26"],
+          participantIds: ["character-1"]
+        }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/works/work-1/timeline",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "timeline-event-create-0001",
+      body: expect.objectContaining({
+        name: "灰烬跃迁",
+        trackId: "track-1",
+        chapterIds: ["chapter-26"],
+        participantIds: ["character-1"]
+      })
     });
   });
 

@@ -9040,10 +9040,6 @@ export class Store {
 
   createTimelineEvent(workId: string, input: TimelineInput, source = "create", sourceRef: string | null = null): Record<string, unknown> {
     this.getWork(workId);
-    if (input.trackId) {
-      const track = this.getTimelineTrack(input.trackId);
-      if (track.workId !== workId) throw new AppError(400, "TIMELINE_TRACK_WORK_MISMATCH", "独立时间轴不属于当前作品");
-    }
     return this.insertTimelineEventWithId(workId, id("event"), input, source, sourceRef);
   }
 
@@ -9055,10 +9051,7 @@ export class Store {
     sourceRef: string | null = null,
     changeNote = ""
   ): Record<string, unknown> {
-    if (input.trackId) {
-      const track = this.getTimelineTrack(input.trackId);
-      if (track.workId !== workId) throw new AppError(400, "TIMELINE_TRACK_WORK_MISMATCH", "独立时间轴不属于当前作品");
-    }
+    this.assertTimelineEventReferencesInWork(workId, input);
     const timestamp = now();
     this.db.transaction(() => {
       this.db.run(
@@ -9101,6 +9094,23 @@ export class Store {
     return this.db
       .all("SELECT * FROM timeline_events WHERE work_id = ? ORDER BY time_sort IS NULL, time_sort, created_at", workId)
       .map((row) => this.mapTimelineEvent(row));
+  }
+
+  findTimelineEventDuplicateCandidates(workId: string, name: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    return this.db.all(
+      "SELECT id, work_id, name, track_id, time_label FROM timeline_events WHERE work_id = ? AND name = ? LIMIT 20",
+      workId,
+      name
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "timeline-event",
+      name: requiredString(row, "name"),
+      trackId: optionalString(row, "track_id"),
+      timeLabel: requiredString(row, "time_label"),
+      versionNo: this.currentEntityVersionNo("timeline-event", requiredString(row, "id"))
+    }));
   }
 
   listTimelineEventsPage(workId: string, pagination: Pagination): PaginatedResult<Record<string, unknown>> {
@@ -9271,6 +9281,21 @@ export class Store {
       createdAt: requiredString(row, "created_at"),
       updatedAt: requiredString(row, "updated_at")
     };
+  }
+
+  private assertTimelineEventReferencesInWork(workId: string, input: Pick<TimelineInput, "trackId" | "chapterIds" | "participantIds">): void {
+    if (input.trackId) {
+      const track = this.getTimelineTrack(input.trackId);
+      if (track.workId !== workId) throw new AppError(400, "TIMELINE_TRACK_WORK_MISMATCH", "独立时间轴不属于当前作品");
+    }
+    for (const chapterId of new Set(input.chapterIds ?? [])) {
+      const chapter = this.getChapter(chapterId);
+      if (chapter.workId !== workId) throw new AppError(400, "CHAPTER_WORK_MISMATCH", "时间轴关联章节不属于当前作品");
+    }
+    for (const participantId of new Set(input.participantIds ?? [])) {
+      const participant = this.getCharacter(participantId);
+      if (participant.workId !== workId) throw new AppError(400, "CHARACTER_WORK_MISMATCH", "时间轴参与角色不属于当前作品");
+    }
   }
 
   private mapTimelineTrack(row: Row): Record<string, unknown> {

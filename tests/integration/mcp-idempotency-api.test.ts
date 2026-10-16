@@ -398,6 +398,54 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "timeline-track.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建时间轴事件并拒绝跨作品轨道、章节和参与角色", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_timeline_event");
+    const other = await registerFixture(runtime, "idempotent_timeline_event_other");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const localTrack = runWithRequestActor(fixture.user, () => runtime.store.createTimelineTrack(fixture.workId, { name: "归航纪年" }));
+    const foreignTrack = runWithRequestActor(other.user, () => runtime.store.createTimelineTrack(other.workId, { name: "他作纪年" }));
+    const foreignVolume = runWithRequestActor(other.user, () => runtime.store.createVolume(other.workId, { title: "他作卷" }));
+    const foreignChapter = runWithRequestActor(other.user, () => runtime.store.createChapter(other.workId, {
+      volumeId: String(foreignVolume.id),
+      title: "他作章节"
+    }));
+    const foreignCharacter = runWithRequestActor(other.user, () => runtime.store.createCharacter(other.workId, { name: "他作角色" }));
+    const payload = { name: "灰烬跃迁", trackId: localTrack.id, timeLabel: "新历 17 年" };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/timeline`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-timeline-event-create-0001").send(payload).expect(201);
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/timeline`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-timeline-event-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/timeline`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-timeline-event-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "timeline-event", name: payload.name, versionNo: 1 })] }
+    });
+
+    for (const [key, invalidPayload] of [
+      ["track", { name: "跨作品轨道", trackId: foreignTrack.id }],
+      ["chapter", { name: "跨作品章节", chapterIds: [foreignChapter.id] }],
+      ["character", { name: "跨作品角色", participantIds: [foreignCharacter.id] }]
+    ] as const) {
+      await request(runtime.app).post(`/api/works/${fixture.workId}/timeline`)
+        .set("Authorization", authorization)
+        .set("Idempotency-Key", `mcp-timeline-event-invalid-${key}`)
+        .send(invalidPayload)
+        .expect(400);
+    }
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM timeline_events WHERE work_id = ?", fixture.workId)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'timeline-event' AND entity_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'timeline.created'", created.body.data.id))
+      .toEqual({ action: "timeline.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

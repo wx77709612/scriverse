@@ -3452,8 +3452,17 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     data(response, pagination ? store.listTimelineEventsPage(request.params.workId, pagination) : store.listTimelineEvents(request.params.workId));
   });
   app.post("/api/works/:workId/timeline", (request, response) => {
-    const event = store.createTimelineEvent(request.params.workId, parse(timelineSchema, request.body));
-    data(response, event, 201);
+    const input = parse(timelineSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "timeline-event.create",
+      input,
+      () => store.createTimelineEvent(request.params.workId, input),
+      201,
+      () => store.findTimelineEventDuplicateCandidates(request.params.workId, input.name)
+    );
   });
   app.post("/api/works/:workId/timeline/merge", (request, response) => {
     const input = parse(z.object({
