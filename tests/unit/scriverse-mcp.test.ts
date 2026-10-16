@@ -259,6 +259,22 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/characters/character-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "character-1",
+            workId: "work-1",
+            name: "沈砚",
+            code: "领航者",
+            aliases: ["阿砚"],
+            role: "领航员",
+            raceId: "race-1",
+            organizationIds: ["organization-1"],
+            versionNo: 6
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/characters/character-1/sections?page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -824,7 +840,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_review_record",
       "set_writing_goal",
       "update_draft",
-      "update_setting"
+      "update_setting",
+      "update_character"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2586,6 +2603,48 @@ describe("Scriverse MCP Bridge", () => {
         status: "confirmed",
         changeNote: "确认校准规则",
         expectedVersionNo: 4
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新正式角色", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_character",
+      arguments: {
+        characterId: "character-1",
+        code: "领航者",
+        aliases: ["阿砚"],
+        organizationIds: ["organization-1"],
+        changeNote: "补充角色代号",
+        expectedVersionNo: 5
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      character: {
+        id: "character-1",
+        workId: "work-1",
+        name: "沈砚",
+        code: "领航者",
+        aliases: ["阿砚"],
+        role: "领航员",
+        raceId: "race-1",
+        organizationIds: ["organization-1"],
+        versionNo: 6
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/characters/character-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        code: "领航者",
+        aliases: ["阿砚"],
+        organizationIds: ["organization-1"],
+        changeNote: "补充角色代号",
+        expectedVersionNo: 5
       }
     });
   });

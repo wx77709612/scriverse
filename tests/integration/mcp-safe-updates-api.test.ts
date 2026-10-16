@@ -126,4 +126,38 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'setting.updated'", settingId))
       .toEqual({ action: "setting.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新正式角色并拒绝跨作品关联", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_character_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_character_outsider");
+    const character = runWithRequestActor(owner.user, () => runtime.store.createCharacter(owner.workId, { name: "沈砚" }));
+    const foreignRace = runWithRequestActor(outsider.user, () => runtime.store.createRace(outsider.workId, { name: "异乡种族" }));
+    const characterId = String(character.id);
+    const updated = await request(runtime.app).patch(`/api/characters/${characterId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ code: "领航者", aliases: ["阿砚"], changeNote: "补充角色代号", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: characterId, code: "领航者", aliases: ["阿砚"], versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/characters/${characterId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ code: "不得覆盖", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/characters/${characterId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ raceId: foreignRace.id, expectedVersionNo: 2 }).expect(400);
+    await request(runtime.app).patch(`/api/characters/${characterId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ code: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getCharacter(characterId)).toMatchObject({ code: "领航者", raceId: null, versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM character_versions WHERE character_id = ? ORDER BY version_no DESC LIMIT 1",
+      characterId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'character.updated'", characterId))
+      .toEqual({ action: "character.updated", user_id: owner.user.userId });
+  });
 });

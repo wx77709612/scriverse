@@ -1863,5 +1863,60 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_character",
+    {
+      title: "安全更新 Scriverse 正式角色",
+      description: "使用当前版本号更新正式角色及其种族、组织和首次登场章节关联；版本冲突或跨作品引用会被拒绝。",
+      inputSchema: z.object({
+        characterId: identifier.describe("角色 ID"),
+        name: z.string().trim().min(1).max(200).optional().describe("角色标准名"),
+        gender: z.enum(CHARACTER_GENDERS).optional().describe("角色性别"),
+        isDead: z.boolean().optional().describe("角色是否已经死亡"),
+        code: z.string().trim().max(200).optional().describe("角色代号"),
+        aliases: z.array(z.string().trim().min(1).max(200)).max(100).optional().describe("别名列表"),
+        raceId: identifier.nullable().optional().describe("同一作品内的种族 ID"),
+        organizationIds: z.array(identifier).max(100).optional().describe("同一作品内的组织 ID"),
+        attributes: z.record(z.string(), z.unknown()).optional().describe("角色属性"),
+        profile: z.record(z.string(), z.unknown()).optional().describe("角色档案"),
+        currentState: z.record(z.string(), z.unknown()).optional().describe("角色当前状态"),
+        lockedFields: z.array(z.string().trim().min(1).max(200)).max(100).optional().describe("锁定字段"),
+        firstChapterId: identifier.nullable().optional().describe("同一作品内的首次登场章节 ID"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.name,
+        value.gender,
+        value.isDead,
+        value.code,
+        value.aliases,
+        value.raceId,
+        value.organizationIds,
+        value.attributes,
+        value.profile,
+        value.currentState,
+        value.lockedFields,
+        value.firstChapterId
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项角色内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ characterId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const character = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/characters/${encodeURIComponent(characterId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 正式角色：", character, { character });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
