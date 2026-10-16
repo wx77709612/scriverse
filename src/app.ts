@@ -4955,10 +4955,11 @@ export function createRuntime(options: RuntimeOptions): Runtime {
   });
   app.get("/api/works/:workId/writing-progress", (request, response) => data(response, store.getWritingProgress(request.params.workId)));
   app.put("/api/works/:workId/writing-goal", (request, response) => {
-    const input = parse(z.object({
+    const { expectedVersionNo, ...input } = parse(z.object({
       dailyGoal: z.number().int().min(0).max(1_000_000),
       targetTotal: z.number().int().min(0).max(100_000_000),
-      deadline: z.string().date().nullable()
+      deadline: z.string().date().nullable(),
+      expectedVersionNo: expectedVersionNoSchema
     }).strict(), request.body);
     if (request.get("Idempotency-Key") !== undefined) {
       idempotentCreate(
@@ -4967,13 +4968,13 @@ export function createRuntime(options: RuntimeOptions): Runtime {
         request.params.workId,
         "writing-goal.create",
         input,
-        () => store.updateWritingGoal(request.params.workId, input),
+        () => store.updateWritingGoal(request.params.workId, input, expectedVersionNo),
         200,
         () => store.findWritingGoalDuplicateCandidates(request.params.workId)
       );
       return;
     }
-    data(response, store.updateWritingGoal(request.params.workId, input));
+    data(response, store.updateWritingGoal(request.params.workId, input, expectedVersionNo));
   });
 
   if (options.serveUi ?? true) {

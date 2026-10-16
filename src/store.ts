@@ -13537,6 +13537,7 @@ export class Store {
         dailyGoal,
         targetTotal,
         deadline: goal ? optionalString(goal, "deadline") : null,
+        versionNo: goal ? numberValue(goal, "version_no") : 0,
         updatedAt: goal ? requiredString(goal, "updated_at") : null
       },
       currentWords: Number(work.wordCount ?? 0),
@@ -13559,25 +13560,52 @@ export class Store {
       dailyGoal: numberValue(row, "daily_goal"),
       targetTotal: numberValue(row, "target_total"),
       deadline: optionalString(row, "deadline"),
-      versionNo: 1,
+      versionNo: numberValue(row, "version_no"),
       updatedAt: requiredString(row, "updated_at")
     }];
   }
 
-  updateWritingGoal(workId: string, input: { dailyGoal: number; targetTotal: number; deadline: string | null }): Record<string, unknown> {
+  updateWritingGoal(
+    workId: string,
+    input: { dailyGoal: number; targetTotal: number; deadline: string | null },
+    expectedVersionNo?: number
+  ): Record<string, unknown> {
     this.getWork(workId);
     const timestamp = now();
     this.db.transaction(() => {
+      const current = this.db.get("SELECT version_no FROM writing_goals WHERE work_id = ?", workId);
+      const currentVersionNo = current ? numberValue(current, "version_no") : 0;
+      if (expectedVersionNo !== undefined && expectedVersionNo !== currentVersionNo) {
+        throw new AppError(409, "VERSION_CONFLICT", "写作目标已被其他操作修改，请刷新后重试", {
+          expectedVersionNo,
+          currentVersionNo
+        });
+      }
       this.db.run(
-        `INSERT INTO writing_goals (work_id, daily_goal, target_total, deadline, created_at, updated_at, updated_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO writing_goals (work_id, daily_goal, target_total, deadline, created_at, updated_at, updated_by_user_id, version_no)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)
          ON CONFLICT(work_id) DO UPDATE SET daily_goal = excluded.daily_goal, target_total = excluded.target_total,
-         deadline = excluded.deadline, updated_at = excluded.updated_at, updated_by_user_id = excluded.updated_by_user_id`,
+         deadline = excluded.deadline, updated_at = excluded.updated_at, updated_by_user_id = excluded.updated_by_user_id,
+         version_no = writing_goals.version_no + 1`,
         workId,
         input.dailyGoal,
         input.targetTotal,
         input.deadline,
         timestamp,
+        timestamp,
+        currentRequestActor()?.userId ?? null
+      );
+      const updated = this.db.get("SELECT * FROM writing_goals WHERE work_id = ?", workId);
+      if (!updated) throw new AppError(500, "WRITING_GOAL_UPDATE_FAILED", "写作目标保存失败");
+      this.db.run(
+        `INSERT INTO writing_goal_versions
+         (work_id, version_no, daily_goal, target_total, deadline, created_at, created_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        workId,
+        numberValue(updated, "version_no"),
+        numberValue(updated, "daily_goal"),
+        numberValue(updated, "target_total"),
+        optionalString(updated, "deadline"),
         timestamp,
         currentRequestActor()?.userId ?? null
       );

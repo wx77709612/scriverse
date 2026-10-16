@@ -2250,5 +2250,41 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_writing_goal",
+    {
+      title: "安全更新 Scriverse 写作目标",
+      description: "使用当前版本号更新作品写作目标；版本冲突会被拒绝并保留每次目标快照。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        dailyGoal: z.number().int().min(0).max(1_000_000).describe("每日目标字数"),
+        targetTotal: z.number().int().min(0).max(100_000_000).describe("目标总字数"),
+        deadline: z.string().date().nullable().describe("目标截止日期"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ workId, ...input }) => {
+      try {
+        const progress = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/writing-goal`,
+          { method: "PUT", body: input }
+        );
+        const progressRecord = progress && typeof progress === "object" && !Array.isArray(progress)
+          ? progress as Record<string, unknown>
+          : {};
+        const goalRecord = progressRecord.goal && typeof progressRecord.goal === "object" && !Array.isArray(progressRecord.goal)
+          ? progressRecord.goal as Record<string, unknown>
+          : {};
+        const writingGoal = { workId, ...goalRecord };
+        return result("已安全更新 Scriverse 写作目标：", writingGoal, { writingGoal });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

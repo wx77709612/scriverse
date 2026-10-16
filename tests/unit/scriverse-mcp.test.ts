@@ -854,6 +854,27 @@ async function startScriverseFixture(options: {
         return;
       }
       if (request.method === "PUT" && request.url === "/api/works/work-1/writing-goal") {
+        const input = body as Record<string, unknown>;
+        if (input.expectedVersionNo !== undefined) {
+          response.end(JSON.stringify({
+            data: {
+              goal: {
+                workId: "work-1",
+                dailyGoal: input.dailyGoal,
+                targetTotal: input.targetTotal,
+                deadline: input.deadline,
+                versionNo: 2,
+                updatedAt: "2026-10-16T02:00:00.000Z"
+              },
+              currentWords: 64000,
+              todayWords: 1800,
+              dailyCompletion: 0.75,
+              totalCompletion: 0.5,
+              trend: []
+            }
+          }));
+          return;
+        }
         response.end(JSON.stringify({
           data: {
             goal: {
@@ -977,7 +998,8 @@ describe("Scriverse MCP Bridge", () => {
       "update_timeline_event",
       "update_relationship",
       "update_chapter_outline",
-      "update_foreshadow"
+      "update_foreshadow",
+      "update_writing_goal"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -3101,6 +3123,43 @@ describe("Scriverse MCP Bridge", () => {
         resolutionNote: "沈砚用旧钟校正了真实坐标。",
         changeNote: "记录伏笔回收",
         expectedVersionNo: 4
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新写作目标", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_writing_goal",
+      arguments: {
+        workId: "work-1",
+        dailyGoal: 2400,
+        targetTotal: 128000,
+        deadline: "2027-04-01",
+        expectedVersionNo: 1
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      writingGoal: {
+        workId: "work-1",
+        dailyGoal: 2400,
+        targetTotal: 128000,
+        deadline: "2027-04-01",
+        versionNo: 2,
+        updatedAt: "2026-10-16T02:00:00.000Z"
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PUT",
+      url: "/api/works/work-1/writing-goal",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        dailyGoal: 2400,
+        targetTotal: 128000,
+        deadline: "2027-04-01",
+        expectedVersionNo: 1
       }
     });
   });

@@ -745,6 +745,8 @@ describe("数据库版本化迁移", () => {
     expect(first.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chapter_annotations'")?.name).toBe("chapter_annotations");
     expect(first.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'chapter_annotation_versions'")?.name).toBe("chapter_annotation_versions");
     expect(first.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'writing_goals'")?.name).toBe("writing_goals");
+    expect(first.all("PRAGMA table_info(writing_goals)").some((column) => column.name === "version_no" && column.dflt_value === "1")).toBe(true);
+    expect(first.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'writing_goal_versions'")?.name).toBe("writing_goal_versions");
     expect(first.get("SELECT title, chapter_type FROM chapters WHERE id = 'chapter-old'")).toEqual({ title: "第一章", chapter_type: "正文" });
     expect(first.all("SELECT name, species FROM characters ORDER BY name")).toEqual([
       { name: "拉顿", species: "" },

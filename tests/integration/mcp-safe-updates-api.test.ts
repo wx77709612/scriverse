@@ -436,4 +436,40 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'foreshadow.updated'", foreshadowId))
       .toEqual({ action: "foreshadow.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新写作目标并记录历史", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_writing_goal_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_writing_goal_outsider");
+    await request(runtime.app).put(`/api/works/${owner.workId}/writing-goal`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ dailyGoal: 2000, targetTotal: 120000, deadline: "2027-03-01" }).expect(200);
+
+    const updated = await request(runtime.app).put(`/api/works/${owner.workId}/writing-goal`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ dailyGoal: 2400, targetTotal: 128000, deadline: "2027-04-01", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data.goal).toMatchObject({ dailyGoal: 2400, targetTotal: 128000, deadline: "2027-04-01", versionNo: 2 });
+
+    const stale = await request(runtime.app).put(`/api/works/${owner.workId}/writing-goal`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ dailyGoal: 3000, targetTotal: 128000, deadline: null, expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).put(`/api/works/${owner.workId}/writing-goal`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ dailyGoal: 3000, targetTotal: 128000, deadline: null, expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.database.get("SELECT daily_goal, target_total, version_no FROM writing_goals WHERE work_id = ?", owner.workId))
+      .toEqual({ daily_goal: 2400, target_total: 128000, version_no: 2 });
+    expect(runtime.database.all(
+      "SELECT version_no, daily_goal, created_by_user_id FROM writing_goal_versions WHERE work_id = ? ORDER BY version_no",
+      owner.workId
+    )).toEqual([
+      { version_no: 1, daily_goal: 2000, created_by_user_id: owner.user.userId },
+      { version_no: 2, daily_goal: 2400, created_by_user_id: owner.user.userId }
+    ]);
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE work_id = ? AND action = 'work.writing_goal.updated' ORDER BY created_at DESC, rowid DESC LIMIT 1", owner.workId))
+      .toEqual({ action: "work.writing_goal.updated", user_id: owner.user.userId });
+  });
 });
