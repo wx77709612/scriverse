@@ -357,6 +357,22 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/races/race-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "race-1",
+            workId: "work-1",
+            name: "星痕遗民",
+            description: "皮肤会记录经过的恒星光谱。",
+            isExtinct: false,
+            parentRaceId: null,
+            settingsMarkdown: "## 生理特征\n\n星痕会随年龄逐渐褪色。",
+            memberIds: ["character-1"],
+            versionNo: 4
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/organizations?includeContent=false&page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -858,7 +874,8 @@ describe("Scriverse MCP Bridge", () => {
       "update_draft",
       "update_setting",
       "update_character",
-      "update_character_section"
+      "update_character_section",
+      "update_race"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2703,6 +2720,48 @@ describe("Scriverse MCP Bridge", () => {
         contentMarkdown: "沈砚曾参与第一次灰烬航标试验。",
         summary: "首次试验幸存者。",
         changeNote: "补充试验经历",
+        expectedVersionNo: 3
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新正式种族", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_race",
+      arguments: {
+        raceId: "race-1",
+        name: "星痕遗民",
+        settingsMarkdown: "## 生理特征\n\n星痕会随年龄逐渐褪色。",
+        memberIds: ["character-1"],
+        changeNote: "补充种族现状",
+        expectedVersionNo: 3
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      race: {
+        id: "race-1",
+        workId: "work-1",
+        name: "星痕遗民",
+        description: "皮肤会记录经过的恒星光谱。",
+        isExtinct: false,
+        parentRaceId: null,
+        settingsMarkdown: "## 生理特征\n\n星痕会随年龄逐渐褪色。",
+        memberIds: ["character-1"],
+        versionNo: 4
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/races/race-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        name: "星痕遗民",
+        settingsMarkdown: "## 生理特征\n\n星痕会随年龄逐渐褪色。",
+        memberIds: ["character-1"],
+        changeNote: "补充种族现状",
         expectedVersionNo: 3
       }
     });

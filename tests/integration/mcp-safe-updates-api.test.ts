@@ -195,4 +195,38 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'character-section.updated'", sectionId))
       .toEqual({ action: "character-section.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新正式种族并拒绝跨作品关联", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_race_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_race_outsider");
+    const race = runWithRequestActor(owner.user, () => runtime.store.createRace(owner.workId, { name: "星痕人" }));
+    const foreignCharacter = runWithRequestActor(outsider.user, () => runtime.store.createCharacter(outsider.workId, { name: "异乡人" }));
+    const raceId = String(race.id);
+    const updated = await request(runtime.app).patch(`/api/races/${raceId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ name: "星痕遗民", description: "他们守护熄灭恒星的记录。", changeNote: "补充种族现状", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: raceId, name: "星痕遗民", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/races/${raceId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ description: "不得覆盖的新内容", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/races/${raceId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ memberIds: [foreignCharacter.id], expectedVersionNo: 2 }).expect(400);
+    await request(runtime.app).patch(`/api/races/${raceId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ description: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getRace(raceId)).toMatchObject({ name: "星痕遗民", versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'race' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      raceId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'race.updated'", raceId))
+      .toEqual({ action: "race.updated", user_id: owner.user.userId });
+  });
 });

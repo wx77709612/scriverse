@@ -1963,5 +1963,48 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_race",
+    {
+      title: "安全更新 Scriverse 正式种族",
+      description: "使用当前版本号更新正式种族及其层级和角色成员关联；版本冲突或跨作品引用会被拒绝。",
+      inputSchema: z.object({
+        raceId: identifier.describe("种族 ID"),
+        name: z.string().trim().min(1).max(200).optional().describe("种族名称"),
+        isExtinct: z.boolean().optional().describe("是否已经灭绝"),
+        parentRaceId: identifier.nullable().optional().describe("同一作品内的上级种族 ID"),
+        description: z.string().max(100_000).optional().describe("种族描述"),
+        settingsMarkdown: z.string().max(200_000).optional().describe("种族设定资料，支持 Markdown"),
+        memberIds: z.array(identifier).max(1000).optional().describe("同一作品内的角色成员 ID"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.name,
+        value.isExtinct,
+        value.parentRaceId,
+        value.description,
+        value.settingsMarkdown,
+        value.memberIds
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项种族内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ raceId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const race = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/races/${encodeURIComponent(raceId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 正式种族：", race, { race });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
