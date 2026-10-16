@@ -602,7 +602,7 @@ describe("MCP 写入幂等契约", () => {
     expect(runtime.store.getChapter(String(chapter.id))).toMatchObject({ content: payload.content, versionNo: Number(chapter.versionNo) + 1 });
     expect(runtime.database.get(
       "SELECT created_by_user_id FROM chapter_versions WHERE chapter_id = ? AND version_no = ?",
-      chapter.id,
+      String(chapter.id),
       Number(chapter.versionNo) + 1
     )).toEqual({ created_by_user_id: fixture.user.userId });
 

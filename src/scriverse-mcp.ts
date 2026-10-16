@@ -164,6 +164,64 @@ function summarizeList(value: unknown, fields: readonly string[]): unknown {
   return mapListItems(value, (item) => selectSummaryFields(item, fields));
 }
 
+function summarizeWritePlan(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Scriverse 正文审批计划响应格式无效");
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== "string" || typeof record.workId !== "string" || typeof record.status !== "string") {
+    throw new Error("Scriverse 正文审批计划响应缺少必要字段");
+  }
+  const operations = Array.isArray(record.operations)
+    ? record.operations.map((operation) => {
+      const operationRecord = operation && typeof operation === "object" && !Array.isArray(operation)
+        ? operation as Record<string, unknown>
+        : {};
+      const fields = Array.isArray(operationRecord.fields)
+        ? operationRecord.fields.map((field) => selectSummaryFields(field, [
+          "key",
+          "label",
+          "changed",
+          "addedLines",
+          "removedLines",
+          "previewBefore",
+          "previewAfter"
+        ]))
+        : [];
+      const resultValue = operationRecord.result;
+      const operationResult = resultValue && typeof resultValue === "object" && !Array.isArray(resultValue)
+        ? selectSummaryFields(resultValue, ["entityId", "versionNo", "summary"])
+        : null;
+      return {
+        ...selectSummaryFields(operationRecord, [
+          "seq",
+          "opType",
+          "module",
+          "entityType",
+          "entityId",
+          "targetVersionNo",
+          "title"
+        ]),
+        fields,
+        result: operationResult
+      };
+    })
+    : [];
+  return {
+    ...selectSummaryFields(record, [
+      "id",
+      "workId",
+      "kind",
+      "status",
+      "aiSummary",
+      "operationCount",
+      "undoAvailable",
+      "sourcePlanId"
+    ]),
+    operations
+  };
+}
+
 async function requestScriverse(
   fetchImpl: typeof fetch,
   config: ScriverseMcpConfig,
@@ -2280,6 +2338,171 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
           : {};
         const writingGoal = { workId, ...goalRecord };
         return result("已安全更新 Scriverse 写作目标：", writingGoal, { writingGoal });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "prepare_chapter_write_plan",
+    {
+      title: "准备 Scriverse 章节正文变更",
+      description: "为指定章节准备正文变更预览，不会立即覆盖正文。返回待确认的 Write Plan；用户确认后再调用 confirm_write_plan。此工具只连接 Scriverse，不会调用第三方 AI API。",
+      inputSchema: z.object({
+        workId: identifier.optional().describe("作品 ID；与 workTitle 二选一"),
+        workTitle: z.string().trim().min(1).max(200).optional().describe("作品精确名称；与 workId 二选一"),
+        chapterId: identifier.describe("同一作品内的章节 ID"),
+        content: z.string().max(2_000_000).describe("准备写入的完整章节正文"),
+        expectedVersionNo: z.number().int().min(1).describe("读取章节时得到的当前版本号"),
+        summary: z.string().trim().min(1).max(2000).describe("本次正文变更的简要说明"),
+        changeNote: z.string().trim().max(2000).optional().describe("写入章节版本历史的修改说明"),
+        idempotencyKey
+      }).strict().refine(
+        (input) => (input.workId === undefined) !== (input.workTitle === undefined),
+        { message: "workId 与 workTitle 必须且只能提供一个" }
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, workTitle, idempotencyKey: key, ...input }) => {
+      try {
+        const resolvedWorkId = await resolveWorkId(fetchImpl, config, { workId, workTitle });
+        const plan = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(resolvedWorkId)}/ai/write-plans/chapter-content`,
+          { method: "POST", body: input, idempotencyKey: key }
+        );
+        const writePlan = summarizeWritePlan(plan);
+        return result("已准备 Scriverse 章节正文变更，等待用户确认：", writePlan, { writePlan });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "get_write_plan",
+    {
+      title: "读取 Scriverse 正文变更计划",
+      description: "读取正文 Write Plan 的当前状态、精简差异预览和执行结果，不返回完整章节正文。",
+      inputSchema: z.object({
+        workId: identifier.optional().describe("作品 ID；与 workTitle 二选一"),
+        workTitle: z.string().trim().min(1).max(200).optional().describe("作品精确名称；与 workId 二选一"),
+        planId: identifier.describe("Write Plan ID")
+      }).strict().refine(
+        (input) => (input.workId === undefined) !== (input.workTitle === undefined),
+        { message: "workId 与 workTitle 必须且只能提供一个" }
+      ),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, workTitle, planId }) => {
+      try {
+        const resolvedWorkId = await resolveWorkId(fetchImpl, config, { workId, workTitle });
+        const plan = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(resolvedWorkId)}/ai/write-plans/${encodeURIComponent(planId)}`
+        );
+        const writePlan = summarizeWritePlan(plan);
+        return result("Scriverse 正文变更计划：", writePlan, { writePlan });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "confirm_write_plan",
+    {
+      title: "确认执行 Scriverse 正文变更计划",
+      description: "确认并执行待处理的正文 Write Plan。执行前会重新检查作品权限、章节归属和版本；版本已变化时不会覆盖。",
+      inputSchema: z.object({
+        workId: identifier.optional().describe("作品 ID；与 workTitle 二选一"),
+        workTitle: z.string().trim().min(1).max(200).optional().describe("作品精确名称；与 workId 二选一"),
+        planId: identifier.describe("用户已经审阅并明确批准的 Write Plan ID")
+      }).strict().refine(
+        (input) => (input.workId === undefined) !== (input.workTitle === undefined),
+        { message: "workId 与 workTitle 必须且只能提供一个" }
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ workId, workTitle, planId }) => {
+      try {
+        const resolvedWorkId = await resolveWorkId(fetchImpl, config, { workId, workTitle });
+        const plan = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(resolvedWorkId)}/ai/write-plans/${encodeURIComponent(planId)}/confirm`,
+          { method: "POST" }
+        );
+        const writePlan = summarizeWritePlan(plan);
+        return result("已执行 Scriverse 正文变更计划：", writePlan, { writePlan });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "reject_write_plan",
+    {
+      title: "拒绝 Scriverse 正文变更计划",
+      description: "拒绝待处理的正文 Write Plan，不会修改章节正文。",
+      inputSchema: z.object({
+        workId: identifier.optional().describe("作品 ID；与 workTitle 二选一"),
+        workTitle: z.string().trim().min(1).max(200).optional().describe("作品精确名称；与 workId 二选一"),
+        planId: identifier.describe("需要拒绝的 Write Plan ID")
+      }).strict().refine(
+        (input) => (input.workId === undefined) !== (input.workTitle === undefined),
+        { message: "workId 与 workTitle 必须且只能提供一个" }
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ workId, workTitle, planId }) => {
+      try {
+        const resolvedWorkId = await resolveWorkId(fetchImpl, config, { workId, workTitle });
+        const plan = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(resolvedWorkId)}/ai/write-plans/${encodeURIComponent(planId)}/reject`,
+          { method: "POST" }
+        );
+        const writePlan = summarizeWritePlan(plan);
+        return result("已拒绝 Scriverse 正文变更计划：", writePlan, { writePlan });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "prepare_write_plan_undo",
+    {
+      title: "准备撤销 Scriverse 正文变更",
+      description: "为已经执行且仍可撤销的正文 Write Plan 创建撤销预览。撤销计划不会立即写入，仍需用户再次确认并调用 confirm_write_plan。",
+      inputSchema: z.object({
+        workId: identifier.optional().describe("作品 ID；与 workTitle 二选一"),
+        workTitle: z.string().trim().min(1).max(200).optional().describe("作品精确名称；与 workId 二选一"),
+        planId: identifier.describe("需要撤销的已执行 Write Plan ID"),
+        idempotencyKey
+      }).strict().refine(
+        (input) => (input.workId === undefined) !== (input.workTitle === undefined),
+        { message: "workId 与 workTitle 必须且只能提供一个" }
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, workTitle, planId, idempotencyKey: key }) => {
+      try {
+        const resolvedWorkId = await resolveWorkId(fetchImpl, config, { workId, workTitle });
+        const plan = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(resolvedWorkId)}/ai/write-plans/${encodeURIComponent(planId)}/undo`,
+          { method: "POST", idempotencyKey: key }
+        );
+        const writePlan = summarizeWritePlan(plan);
+        return result("已准备 Scriverse 正文撤销计划，等待用户确认：", writePlan, { writePlan });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

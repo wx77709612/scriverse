@@ -890,6 +890,59 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      const chapterPlan = (status: string, id = "plan-chapter-1", sourcePlanId: string | null = null) => ({
+        id,
+        workId: "work-1",
+        kind: sourcePlanId ? "undo" : "write",
+        status,
+        aiSummary: sourcePlanId ? "撤销章节正文变更" : "调整归航章节结尾",
+        operationCount: 1,
+        undoAvailable: status === "executed" && !sourcePlanId,
+        sourcePlanId,
+        operations: [{
+          seq: 1,
+          opType: "update_entry",
+          module: "prose",
+          entityType: "chapter",
+          entityId: "chapter-26",
+          targetVersionNo: status === "pending" && sourcePlanId ? 4 : 3,
+          title: sourcePlanId ? "撤销：第二十六章 归航" : "第二十六章 归航",
+          fields: [{
+            key: "content",
+            label: "正文",
+            changed: true,
+            addedLines: 1,
+            removedLines: 1,
+            previewBefore: sourcePlanId ? "新的结尾。" : "旧的结尾。",
+            previewAfter: sourcePlanId ? "旧的结尾。" : "新的结尾。"
+          }],
+          result: status === "executed"
+            ? { entityId: "chapter-26", versionNo: 4, summary: "已更新章节正文" }
+            : null
+        }]
+      });
+      if (request.method === "POST" && request.url === "/api/works/work-1/ai/write-plans/chapter-content") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: chapterPlan("pending") }));
+        return;
+      }
+      if (request.method === "GET" && request.url === "/api/works/work-1/ai/write-plans/plan-chapter-1") {
+        response.end(JSON.stringify({ data: chapterPlan("pending") }));
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/works/work-1/ai/write-plans/plan-chapter-1/confirm") {
+        response.end(JSON.stringify({ data: chapterPlan("executed") }));
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/works/work-1/ai/write-plans/plan-reject-1/reject") {
+        response.end(JSON.stringify({ data: chapterPlan("rejected", "plan-reject-1") }));
+        return;
+      }
+      if (request.method === "POST" && request.url === "/api/works/work-1/ai/write-plans/plan-chapter-1/undo") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: chapterPlan("pending", "plan-undo-1", "plan-chapter-1") }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -999,7 +1052,12 @@ describe("Scriverse MCP Bridge", () => {
       "update_relationship",
       "update_chapter_outline",
       "update_foreshadow",
-      "update_writing_goal"
+      "update_writing_goal",
+      "prepare_chapter_write_plan",
+      "get_write_plan",
+      "confirm_write_plan",
+      "reject_write_plan",
+      "prepare_write_plan_undo"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1032,6 +1090,29 @@ describe("Scriverse MCP Bridge", () => {
         memberIds: { type: "array", maxItems: 1000 },
         idempotencyKey: { type: "string", minLength: 16, maxLength: 128 }
       }
+    });
+    expect(result.tools.find((tool) => tool.name === "prepare_chapter_write_plan")).toMatchObject({
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        additionalProperties: false,
+        required: ["chapterId", "content", "expectedVersionNo", "summary", "idempotencyKey"],
+        properties: {
+          content: { type: "string", maxLength: 2_000_000 },
+          expectedVersionNo: { type: "integer", minimum: 1 },
+          idempotencyKey: { type: "string", minLength: 16, maxLength: 128 }
+        }
+      }
+    });
+    expect(result.tools.find((tool) => tool.name === "confirm_write_plan")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false
     });
   });
 
@@ -3162,6 +3243,113 @@ describe("Scriverse MCP Bridge", () => {
         expectedVersionNo: 1
       }
     });
+  });
+
+  it("通过 MCP 准备、读取、确认、拒绝和撤销章节正文计划", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const prepared = await client.callTool({
+      name: "prepare_chapter_write_plan",
+      arguments: {
+        workTitle: "星海余烬",
+        chapterId: "chapter-26",
+        content: "舰桥前方终于出现了熟悉的恒星。\n新的结尾。",
+        expectedVersionNo: 3,
+        summary: "调整归航章节结尾",
+        changeNote: "增强返航落点",
+        idempotencyKey: "mcp-chapter-plan-0001"
+      }
+    });
+    const detail = await client.callTool({
+      name: "get_write_plan",
+      arguments: { workId: "work-1", planId: "plan-chapter-1" }
+    });
+    const confirmed = await client.callTool({
+      name: "confirm_write_plan",
+      arguments: { workId: "work-1", planId: "plan-chapter-1" }
+    });
+    const rejected = await client.callTool({
+      name: "reject_write_plan",
+      arguments: { workId: "work-1", planId: "plan-reject-1" }
+    });
+    const undo = await client.callTool({
+      name: "prepare_write_plan_undo",
+      arguments: {
+        workId: "work-1",
+        planId: "plan-chapter-1",
+        idempotencyKey: "mcp-chapter-undo-0001"
+      }
+    });
+
+    expect(prepared.structuredContent).toEqual({
+      writePlan: expect.objectContaining({
+        id: "plan-chapter-1",
+        workId: "work-1",
+        status: "pending",
+        operations: [expect.objectContaining({
+          entityType: "chapter",
+          entityId: "chapter-26",
+          fields: [{
+            key: "content",
+            label: "正文",
+            changed: true,
+            addedLines: 1,
+            removedLines: 1,
+            previewBefore: "旧的结尾。",
+            previewAfter: "新的结尾。"
+          }]
+        })]
+      })
+    });
+    expect(JSON.stringify(prepared.structuredContent)).not.toContain("舰桥前方终于出现了熟悉的恒星");
+    expect(detail.structuredContent).toEqual(prepared.structuredContent);
+    expect(confirmed.structuredContent).toEqual({
+      writePlan: expect.objectContaining({
+        id: "plan-chapter-1",
+        status: "executed",
+        undoAvailable: true,
+        operations: [expect.objectContaining({
+          result: { entityId: "chapter-26", versionNo: 4, summary: "已更新章节正文" }
+        })]
+      })
+    });
+    expect(rejected.structuredContent).toEqual({
+      writePlan: expect.objectContaining({ id: "plan-reject-1", status: "rejected" })
+    });
+    expect(undo.structuredContent).toEqual({
+      writePlan: expect.objectContaining({
+        id: "plan-undo-1",
+        kind: "undo",
+        status: "pending",
+        sourcePlanId: "plan-chapter-1"
+      })
+    });
+    expect(fixture.requests).toEqual([
+      { method: "GET", url: "/api/works", authorization: "Bearer scrv_test-secret", body: null },
+      {
+        method: "POST",
+        url: "/api/works/work-1/ai/write-plans/chapter-content",
+        authorization: "Bearer scrv_test-secret",
+        idempotencyKey: "mcp-chapter-plan-0001",
+        body: {
+          chapterId: "chapter-26",
+          content: "舰桥前方终于出现了熟悉的恒星。\n新的结尾。",
+          expectedVersionNo: 3,
+          summary: "调整归航章节结尾",
+          changeNote: "增强返航落点"
+        }
+      },
+      { method: "GET", url: "/api/works/work-1/ai/write-plans/plan-chapter-1", authorization: "Bearer scrv_test-secret", body: null },
+      { method: "POST", url: "/api/works/work-1/ai/write-plans/plan-chapter-1/confirm", authorization: "Bearer scrv_test-secret", body: null },
+      { method: "POST", url: "/api/works/work-1/ai/write-plans/plan-reject-1/reject", authorization: "Bearer scrv_test-secret", body: null },
+      {
+        method: "POST",
+        url: "/api/works/work-1/ai/write-plans/plan-chapter-1/undo",
+        authorization: "Bearer scrv_test-secret",
+        idempotencyKey: "mcp-chapter-undo-0001",
+        body: null
+      }
+    ]);
   });
 
   it("要求通过环境变量提供 Scriverse API Key", () => {
