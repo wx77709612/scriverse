@@ -1,5 +1,6 @@
 import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import { DEFAULT_CHAPTER_ANNOTATION_NOTE_MAX_LENGTH } from "./chapter-annotation-note.js";
 import { CHARACTER_GENDERS, DRAFT_SETTING_MODULES } from "./domain.js";
 import { HYBRID_SEARCH_TYPES, MAXIMUM_WORK_SEARCH_QUERY_LENGTH } from "./hybrid-search.js";
 import { APP_VERSION } from "./version.js";
@@ -1624,6 +1625,55 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
           }
         });
         return result("已添加 Scriverse 伏笔出现位置：", creation, { occurrence, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "create_chapter_comment",
+    {
+      title: "创建 Scriverse 正文评论",
+      description: "在指定章节的正文行范围创建正式评论，并保存对应正文引用与稳定行锚点。疑似重复评论会返回候选；确认仍需保留时可设置 allowDuplicate。",
+      inputSchema: z.object({
+        chapterId: identifier.describe("章节 ID"),
+        startLine: z.number().int().positive().max(100_000).describe("评论起始行（从 1 开始）"),
+        endLine: z.number().int().positive().max(100_000).describe("评论结束行（从 1 开始，最多覆盖 20 行）"),
+        note: z.string().trim().min(1).max(DEFAULT_CHAPTER_ANNOTATION_NOTE_MAX_LENGTH).describe("评论内容"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict().refine((value) => value.endLine >= value.startLine && value.endLine - value.startLine < 20, {
+        message: "评论结束行不能早于起始行，且一次最多覆盖 20 行正文",
+        path: ["endLine"]
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ chapterId, startLine, endLine, note, idempotencyKey, allowDuplicate }) => {
+      try {
+        const comment = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/chapters/${encodeURIComponent(chapterId)}/annotations`,
+          {
+            method: "POST",
+            body: { kind: "note", startLine, endLine, note },
+            idempotencyKey,
+            allowDuplicate
+          }
+        );
+        if (!comment || typeof comment !== "object" || Array.isArray(comment)
+          || typeof (comment as Record<string, unknown>).workId !== "string") {
+          throw new Error("Scriverse 正文评论响应缺少作品信息");
+        }
+        const creation = creationSummary(comment, {
+          workId: (comment as Record<string, unknown>).workId as string,
+          entityType: "chapter-comment",
+          module: "comments",
+          title: startLine === endLine ? `第 ${startLine} 行评论` : `第 ${startLine}-${endLine} 行评论`,
+          relatedEntityIds: { chapterId }
+        });
+        return result("已创建 Scriverse 正文评论：", creation, { comment, creation });
       } catch (error) {
         return errorResult(error, config.apiKey);
       }

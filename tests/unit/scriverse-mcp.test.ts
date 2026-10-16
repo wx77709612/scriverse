@@ -651,6 +651,23 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/chapters/chapter-26/annotations") {
+        response.end(JSON.stringify({
+          data: {
+            id: "annotation-1",
+            workId: "work-1",
+            chapterId: "chapter-26",
+            kind: "note",
+            startLine: 3,
+            endLine: 4,
+            quote: "航海钟突然停摆。\n钟面浮现陌生坐标。",
+            note: "这里需要提示坐标与灰烬门的联系。",
+            status: "open",
+            versionNo: 1
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -746,7 +763,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_chapter",
       "set_chapter_outline",
       "create_foreshadow",
-      "add_foreshadow_occurrence"
+      "add_foreshadow_occurrence",
+      "create_chapter_comment"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2283,6 +2301,58 @@ describe("Scriverse MCP Bridge", () => {
         role: "payoff",
         expectedVersionNo: 4
       })
+    });
+  });
+
+  it("为正文行创建正式评论并返回锚点信息", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_chapter_comment",
+      arguments: {
+        chapterId: "chapter-26",
+        startLine: 3,
+        endLine: 4,
+        note: "这里需要提示坐标与灰烬门的联系。",
+        idempotencyKey: "chapter-comment-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      comment: {
+        id: "annotation-1",
+        workId: "work-1",
+        chapterId: "chapter-26",
+        kind: "note",
+        startLine: 3,
+        endLine: 4,
+        quote: "航海钟突然停摆。\n钟面浮现陌生坐标。",
+        note: "这里需要提示坐标与灰烬门的联系。",
+        status: "open",
+        versionNo: 1
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "chapter-comment",
+        entityId: "annotation-1",
+        title: "第 3-4 行评论",
+        versionNo: 1,
+        module: "comments",
+        relatedEntityIds: { chapterId: "chapter-26" }
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/chapters/chapter-26/annotations",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "chapter-comment-create-0001",
+      body: {
+        kind: "note",
+        startLine: 3,
+        endLine: 4,
+        note: "这里需要提示坐标与灰烬门的联系。"
+      }
     });
   });
 

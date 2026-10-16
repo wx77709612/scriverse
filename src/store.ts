@@ -4439,6 +4439,32 @@ export class Store {
     return this.getChapterAnnotation(annotationId);
   }
 
+  findChapterAnnotationDuplicateCandidates(
+    chapterId: string,
+    input: { kind: "note" | "todo"; startLine: number; endLine: number; note: string }
+  ): Record<string, unknown>[] {
+    const chapter = this.getChapter(chapterId);
+    return this.db.all(
+      `SELECT annotation.*, user.display_name AS actor_display_name, user.username AS actor_username
+       FROM chapter_annotations annotation
+       LEFT JOIN users user ON user.id = annotation.updated_by_user_id
+       WHERE annotation.chapter_id = ? AND annotation.kind = ?
+         AND annotation.start_line = ? AND annotation.end_line = ?
+         AND trim(annotation.note) = trim(?) AND annotation.deleted_at IS NULL
+       ORDER BY annotation.updated_at DESC, annotation.id
+       LIMIT 20`,
+      chapterId,
+      input.kind,
+      input.startLine,
+      input.endLine,
+      input.note
+    ).map((row) => ({
+      ...this.mapChapterAnnotation(row),
+      entityType: input.kind === "note" ? "chapter-comment" : "chapter-todo",
+      chapterTitle: chapter.title
+    }));
+  }
+
   updateChapterAnnotation(annotationId: string, input: { note?: string; status?: "open" | "resolved" }, expectedVersionNo?: number): Record<string, unknown> {
     const current = this.getChapterAnnotation(annotationId);
     this.assertExpectedRevision("chapter-annotation", annotationId, expectedVersionNo, "章节批注", Number(current.versionNo));

@@ -721,6 +721,57 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "foreshadow.occurrence.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建正文评论并保存正文行锚点、版本与审计", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_chapter_comment");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const volume = runWithRequestActor(fixture.user, () => runtime.store.createVolume(fixture.workId, { title: "第一卷" }));
+    const chapter = runWithRequestActor(fixture.user, () => runtime.store.createChapter(fixture.workId, {
+      volumeId: String(volume.id),
+      title: "第三章 灰烬门",
+      content: "舰队抵达边缘。\n沈砚校准航标。\n航海钟突然停摆。\n钟面浮现陌生坐标。"
+    }));
+    const chapterId = String(chapter.id);
+    const payload = {
+      kind: "note",
+      startLine: 3,
+      endLine: 4,
+      note: "这里需要提示坐标与灰烬门的联系。"
+    };
+    const created = await request(runtime.app).post(`/api/chapters/${chapterId}/annotations`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-comment-create-0001").send(payload).expect(201);
+    expect(created.body.data).toMatchObject({
+      workId: fixture.workId,
+      chapterId,
+      kind: "note",
+      quote: "航海钟突然停摆。\n钟面浮现陌生坐标。",
+      versionNo: 1,
+      createdByUserId: fixture.user.userId
+    });
+    const replayed = await request(runtime.app).post(`/api/chapters/${chapterId}/annotations`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-comment-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/chapters/${chapterId}/annotations`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-comment-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "chapter-comment", chapterId, versionNo: 1 })] }
+    });
+    await request(runtime.app).post(`/api/chapters/${chapterId}/annotations`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-chapter-comment-invalid-lines-0001")
+      .send({ ...payload, startLine: 99, endLine: 99, note: "越界评论" }).expect(400);
+
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM chapter_annotations WHERE chapter_id = ? AND deleted_at IS NULL", chapterId)).toEqual({ count: 1 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM chapter_annotation_versions WHERE annotation_id = ?",
+      created.body.data.id
+    )).toEqual({ version_no: 1, created_by_user_id: fixture.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'chapter.annotation.created'", created.body.data.id))
+      .toEqual({ action: "chapter.annotation.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

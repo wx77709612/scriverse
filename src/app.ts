@@ -2840,7 +2840,17 @@ export function createRuntime(options: RuntimeOptions): Runtime {
       endLine: z.number().int().positive(),
       note: z.string().trim().min(1).max(chapterAnnotationNoteMaxLength)
     }).strict().refine((value) => value.endLine >= value.startLine, { message: "结束行不能早于开始行", path: ["endLine"] }), request.body);
-    data(response, store.createChapterAnnotation(request.params.chapterId, input), 201);
+    const chapter = store.getChapter(request.params.chapterId);
+    idempotentCreate(
+      request,
+      response,
+      String(chapter.workId),
+      input.kind === "note" ? "chapter-comment.create" : "chapter-todo.create",
+      { chapterId: request.params.chapterId, input },
+      () => store.createChapterAnnotation(request.params.chapterId, input),
+      201,
+      () => store.findChapterAnnotationDuplicateCandidates(request.params.chapterId, input)
+    );
   });
   app.patch("/api/chapter-annotations/:annotationId", (request, response) => {
     const input = parse(z.object({ note: z.string().trim().min(1).max(chapterAnnotationNoteMaxLength).optional(), status: z.enum(["open", "resolved"]).optional(), expectedVersionNo: expectedVersionNoSchema }).strict().refine((value) => value.note !== undefined || value.status !== undefined, { message: "至少需要修改一项" }), request.body);
