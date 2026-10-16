@@ -590,6 +590,11 @@ async function startScriverseFixture(options: {
         response.end(JSON.stringify({ data: { id: "relationship-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/volumes") {
+        response.statusCode = 201;
+        response.end(JSON.stringify({ data: { id: "volume-2", workId: "work-1", versionNo: 1, ...(body as object) } }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -680,7 +685,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_organization",
       "create_timeline_track",
       "create_timeline_event",
-      "create_relationship"
+      "create_relationship",
+      "create_volume"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -1952,6 +1958,53 @@ describe("Scriverse MCP Bridge", () => {
         category: "social",
         subtype: "导师"
       })
+    });
+  });
+
+  it("创建正式分卷并返回正文模块位置", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_volume",
+      arguments: {
+        workId: "work-1",
+        title: "第二卷 归航",
+        kind: "main",
+        description: "舰队穿越灰烬区后返回故乡。",
+        keywords: ["归航", "灰烬区"],
+        storyOrder: 2,
+        idempotencyKey: "volume-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      volume: {
+        id: "volume-2",
+        workId: "work-1",
+        versionNo: 1,
+        title: "第二卷 归航",
+        kind: "main",
+        description: "舰队穿越灰烬区后返回故乡。",
+        keywords: ["归航", "灰烬区"],
+        storyOrder: 2
+      },
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "volume",
+        entityId: "volume-2",
+        title: "第二卷 归航",
+        versionNo: 1,
+        module: "prose",
+        relatedEntityIds: {}
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/works/work-1/volumes",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "volume-create-0001",
+      body: expect.objectContaining({ title: "第二卷 归航", kind: "main", storyOrder: 2 })
     });
   });
 

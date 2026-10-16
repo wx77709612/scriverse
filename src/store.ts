@@ -3032,6 +3032,26 @@ export class Store {
     return this.db.transaction(() => this.insertVolumeWithId(workId, id("volume"), input, "create", null, "建立分卷"));
   }
 
+  findVolumeDuplicateCandidates(workId: string, title: string): Record<string, unknown>[] {
+    this.getWork(workId);
+    return this.db.all(
+      `SELECT id, work_id, title, kind, story_order, version_no
+       FROM volumes
+       WHERE work_id = ? AND deleted_at IS NULL AND title = ? COLLATE NOCASE
+       LIMIT 20`,
+      workId,
+      title
+    ).map((row) => ({
+      id: requiredString(row, "id"),
+      workId: requiredString(row, "work_id"),
+      entityType: "volume",
+      title: requiredString(row, "title"),
+      kind: requiredString(row, "kind"),
+      storyOrder: numberValue(row, "story_order"),
+      versionNo: numberValue(row, "version_no")
+    }));
+  }
+
   private insertVolumeWithId(
     workId: string,
     volumeId: string,

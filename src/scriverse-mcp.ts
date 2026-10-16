@@ -1381,5 +1381,44 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_volume",
+    {
+      title: "创建 Scriverse 正式分卷",
+      description: "在作品正文模块中创建分卷。疑似同名时返回已有候选；确认仍需保留同名分卷时可设置 allowDuplicate。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        title: z.string().trim().min(1).max(200).describe("分卷标题"),
+        kind: z.enum(["main", "prequel", "extra", "epilogue", "appendix"]).optional().describe("分卷类型"),
+        description: z.string().max(5_000).optional().describe("分卷简介"),
+        keywords: z.array(z.string().trim().min(1).max(100)).max(100).optional().describe("分卷关键词"),
+        storyOrder: z.number().int().min(0).max(1_000_000).optional().describe("故事顺序"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const volume = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/volumes`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        const creation = creationSummary(volume, {
+          workId,
+          entityType: "volume",
+          module: "prose",
+          title: input.title
+        });
+        return result("已创建 Scriverse 正式分卷：", creation, { volume, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

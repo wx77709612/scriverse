@@ -2673,7 +2673,16 @@ export function createRuntime(options: RuntimeOptions): Runtime {
 
   app.post("/api/works/:workId/volumes", (request, response) => {
     const input = parse(z.object({ title: nonEmpty.max(200), kind: z.enum(["main", "prequel", "extra", "epilogue", "appendix"]).optional(), description: z.string().max(5_000).optional(), keywords: z.array(nonEmpty.max(100)).max(100).optional(), storyOrder: z.number().int().min(0).max(1_000_000).optional() }).strict(), request.body);
-    data(response, store.createVolume(request.params.workId, input), 201);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "volume.create",
+      input,
+      () => store.createVolume(request.params.workId, input),
+      201,
+      () => store.findVolumeDuplicateCandidates(request.params.workId, input.title)
+    );
   });
   app.patch("/api/volumes/:volumeId", (request, response) => {
     const input = parse(z.object({ title: nonEmpty.max(200).optional(), kind: z.enum(["main", "prequel", "extra", "epilogue", "appendix"]).optional(), description: z.string().max(5_000).optional(), keywords: z.array(nonEmpty.max(100)).max(100).optional(), sortOrder: z.number().int().min(0).optional(), storyOrder: z.number().int().min(0).max(1_000_000).optional(), expectedVersionNo: expectedVersionNoSchema, changeNote: changeNoteSchema }).strict(), request.body);
