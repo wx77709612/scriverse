@@ -546,6 +546,28 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/relationships/relationship-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "relationship-1",
+            workId: "work-1",
+            fromCharacterId: "character-1",
+            toCharacterId: "character-2",
+            category: "emotional",
+            subtype: "mentor",
+            keywords: ["信任"],
+            directed: true,
+            currentStatus: "active",
+            timeRange: {},
+            confidence: 0.95,
+            evidence: [],
+            confirmationStatus: "confirmed",
+            locked: false,
+            versionNo: 4
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/outlines?page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -915,7 +937,8 @@ describe("Scriverse MCP Bridge", () => {
       "update_character_section",
       "update_race",
       "update_organization",
-      "update_timeline_event"
+      "update_timeline_event",
+      "update_relationship"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2899,6 +2922,58 @@ describe("Scriverse MCP Bridge", () => {
         status: "confirmed",
         changeNote: "确认事故影响",
         expectedVersionNo: 4
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新人物关系", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_relationship",
+      arguments: {
+        relationshipId: "relationship-1",
+        category: "emotional",
+        subtype: "mentor",
+        keywords: ["信任"],
+        confidence: 0.95,
+        confirmationStatus: "confirmed",
+        changeNote: "确认导师关系",
+        expectedVersionNo: 3
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      relationship: {
+        id: "relationship-1",
+        workId: "work-1",
+        fromCharacterId: "character-1",
+        toCharacterId: "character-2",
+        category: "emotional",
+        subtype: "mentor",
+        keywords: ["信任"],
+        directed: true,
+        currentStatus: "active",
+        timeRange: {},
+        confidence: 0.95,
+        evidence: [],
+        confirmationStatus: "confirmed",
+        locked: false,
+        versionNo: 4
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/relationships/relationship-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        category: "emotional",
+        subtype: "mentor",
+        keywords: ["信任"],
+        confidence: 0.95,
+        confirmationStatus: "confirmed",
+        changeNote: "确认导师关系",
+        expectedVersionNo: 3
       }
     });
   });

@@ -307,4 +307,46 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'timeline.updated'", eventId))
       .toEqual({ action: "timeline.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新人物关系并拒绝跨作品角色", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_relationship_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_relationship_outsider");
+    const from = runWithRequestActor(owner.user, () => runtime.store.createCharacter(owner.workId, { name: "沈砚" }));
+    const to = runWithRequestActor(owner.user, () => runtime.store.createCharacter(owner.workId, { name: "林舟" }));
+    const foreign = runWithRequestActor(outsider.user, () => runtime.store.createCharacter(outsider.workId, { name: "异乡人" }));
+    const relationship = runWithRequestActor(owner.user, () => runtime.store.createRelationship(owner.workId, {
+      fromCharacterId: String(from.id),
+      toCharacterId: String(to.id),
+      category: "social",
+      directed: true
+    }));
+    const relationshipId = String(relationship.id);
+
+    await request(runtime.app).patch(`/api/relationships/${relationshipId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ toCharacterId: foreign.id, expectedVersionNo: 1 }).expect(400);
+    const updated = await request(runtime.app).patch(`/api/relationships/${relationshipId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ category: "emotional", subtype: "mentor", confidence: 0.95, confirmationStatus: "confirmed", changeNote: "确认导师关系", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: relationshipId, category: "emotional", subtype: "mentor", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/relationships/${relationshipId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ confidence: 0.5, expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/relationships/${relationshipId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ confidence: 0.5, expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getRelationship(relationshipId)).toMatchObject({ category: "emotional", toCharacterId: to.id, versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'relationship' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      relationshipId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'relationship.updated'", relationshipId))
+      .toEqual({ action: "relationship.updated", user_id: owner.user.userId });
+  });
 });

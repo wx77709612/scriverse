@@ -2104,5 +2104,60 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_relationship",
+    {
+      title: "安全更新 Scriverse 正式人物关系",
+      description: "使用当前版本号更新正式人物关系；两端角色必须属于同一作品，重复关系和版本冲突会被拒绝。",
+      inputSchema: z.object({
+        relationshipId: identifier.describe("人物关系 ID"),
+        fromCharacterId: identifier.optional().describe("同一作品内的起点角色 ID"),
+        toCharacterId: identifier.optional().describe("同一作品内的终点角色 ID"),
+        category: z.enum(["family", "social", "emotional", "conflict", "uncertain"]).optional().describe("关系类别"),
+        subtype: z.string().trim().max(100).optional().describe("关系子类型"),
+        keywords: z.array(z.string().trim().min(1).max(100)).max(30).optional().describe("关系关键词"),
+        directed: z.boolean().optional().describe("关系是否有方向"),
+        currentStatus: z.string().max(100).optional().describe("当前状态"),
+        timeRange: z.record(z.string().max(100), z.unknown()).refine((value) => Object.keys(value).length <= 50, "时间范围字段不能超过 50 项").optional(),
+        confidence: z.number().min(0).max(1).optional().describe("置信度"),
+        evidence: z.array(z.unknown()).max(100).optional().describe("结构化证据"),
+        confirmationStatus: z.enum(["pending", "confirmed", "rejected"]).optional().describe("确认状态"),
+        locked: z.boolean().optional().describe("是否锁定"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.fromCharacterId,
+        value.toCharacterId,
+        value.category,
+        value.subtype,
+        value.keywords,
+        value.directed,
+        value.currentStatus,
+        value.timeRange,
+        value.confidence,
+        value.evidence,
+        value.confirmationStatus,
+        value.locked
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项人物关系内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ relationshipId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const relationship = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/relationships/${encodeURIComponent(relationshipId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 正式人物关系：", relationship, { relationship });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
