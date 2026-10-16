@@ -772,6 +772,39 @@ describe("MCP 写入幂等契约", () => {
       .toEqual({ action: "chapter.annotation.created", user_id: fixture.user.userId });
   });
 
+  it("幂等创建审核记录并记录真实操作者", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const fixture = await registerFixture(runtime, "idempotent_review_record");
+    const authorization = `Bearer ${fixture.apiKey}`;
+    const payload = {
+      itemType: "continuity",
+      dedupeKey: "chapter-26-clock-coordinate",
+      severity: "high",
+      title: "航海钟坐标前后不一致",
+      description: "第三章与第二十六章使用了不同坐标。",
+      entityRefs: [{ type: "chapter", id: "chapter-26" }],
+      evidence: [{ chapterId: "chapter-26", quote: "钟针重新转动。" }],
+      suggestion: "统一为第三章首次出现的坐标。"
+    };
+    const created = await request(runtime.app).post(`/api/works/${fixture.workId}/reviews`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-review-record-create-0001").send(payload).expect(201);
+    expect(created.body.data).toMatchObject({ workId: fixture.workId, title: payload.title, status: "pending" });
+    const replayed = await request(runtime.app).post(`/api/works/${fixture.workId}/reviews`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-review-record-create-0001").send(payload).expect(201);
+    expect(replayed.body.data).toEqual(created.body.data);
+
+    const duplicate = await request(runtime.app).post(`/api/works/${fixture.workId}/reviews`)
+      .set("Authorization", authorization).set("Idempotency-Key", "mcp-review-record-create-0002").send(payload).expect(409);
+    expect(duplicate.body.error).toMatchObject({
+      code: "DUPLICATE_CANDIDATES",
+      details: { candidates: [expect.objectContaining({ id: created.body.data.id, entityType: "review", title: payload.title })] }
+    });
+    expect(runtime.database.get("SELECT COUNT(*) AS count FROM review_items WHERE work_id = ?", fixture.workId)).toEqual({ count: 1 });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'review.created'", created.body.data.id))
+      .toEqual({ action: "review.created", user_id: fixture.user.userId });
+  });
+
   it("业务操作失败时同时回滚实体和幂等记录", async () => {
     const runtime = createTestRuntime();
     runtimes.push(runtime);

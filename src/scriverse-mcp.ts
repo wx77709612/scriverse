@@ -1680,5 +1680,49 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "create_review_record",
+    {
+      title: "创建 Scriverse 审核记录",
+      description: "在作品审核模块中创建结构化审核记录，并保留相关实体引用、证据和修订建议。疑似重复记录会返回候选；确认仍需新增时可设置 allowDuplicate。",
+      inputSchema: z.object({
+        workId: identifier.describe("作品 ID"),
+        itemType: z.string().trim().min(1).max(100).describe("审核类型"),
+        dedupeKey: z.string().trim().max(300).optional().describe("业务去重标识"),
+        severity: z.enum(["low", "medium", "high"]).optional().describe("严重程度"),
+        title: z.string().trim().min(1).max(300).describe("审核标题"),
+        description: z.string().max(100_000).optional().describe("问题说明"),
+        entityRefs: z.array(z.unknown()).max(100).optional().describe("相关实体引用"),
+        evidence: z.array(z.unknown()).max(100).optional().describe("审核证据"),
+        suggestion: z.string().max(100_000).optional().describe("修订建议"),
+        status: z.enum(["pending", "ignored", "fixing", "fixed", "exception"]).optional().describe("审核状态"),
+        resolutionNote: z.string().max(20_000).optional().describe("处理说明"),
+        idempotencyKey,
+        allowDuplicate
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ workId, idempotencyKey, allowDuplicate, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const review = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/works/${encodeURIComponent(workId)}/reviews`,
+          { method: "POST", body, idempotencyKey, allowDuplicate }
+        );
+        const creation = creationSummary(review, {
+          workId,
+          entityType: "review",
+          module: "reviews",
+          title: input.title
+        });
+        return result("已创建 Scriverse 审核记录：", creation, { review, creation });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

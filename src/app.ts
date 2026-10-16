@@ -535,15 +535,16 @@ const foreshadowSchema = z.object({
 
 const reviewSchema = z.object({
   itemType: nonEmpty.max(100),
+  dedupeKey: z.string().trim().max(300).optional(),
   severity: z.enum(["low", "medium", "high"]).optional(),
   title: nonEmpty.max(300),
   description: z.string().max(100_000).optional(),
-  entityRefs: z.array(z.unknown()).optional(),
-  evidence: z.array(z.unknown()).optional(),
+  entityRefs: z.array(z.unknown()).max(100).optional(),
+  evidence: z.array(z.unknown()).max(100).optional(),
   suggestion: z.string().max(100_000).optional(),
   status: z.enum(["pending", "ignored", "fixing", "fixed", "exception"]).optional(),
   resolutionNote: z.string().max(20_000).optional()
-});
+}).strict();
 
 const providerBaseSchema = z.object({
   name: nonEmpty.max(200),
@@ -3639,7 +3640,19 @@ export function createRuntime(options: RuntimeOptions): Runtime {
     const pagination = parsePagination(request.query);
     data(response, pagination ? store.listReviewItemsPage(request.params.workId, pagination, status) : store.listReviewItems(request.params.workId, status));
   });
-  app.post("/api/works/:workId/reviews", (request, response) => data(response, store.createReviewItem(request.params.workId, parse(reviewSchema, request.body)), 201));
+  app.post("/api/works/:workId/reviews", (request, response) => {
+    const input = parse(reviewSchema, request.body);
+    idempotentCreate(
+      request,
+      response,
+      request.params.workId,
+      "review.create",
+      input,
+      () => store.createReviewItem(request.params.workId, input),
+      201,
+      () => store.findReviewDuplicateCandidates(request.params.workId, input)
+    );
+  });
   app.get("/api/reviews/:reviewId", (request, response) => data(response, store.getReviewItem(request.params.reviewId)));
   app.patch("/api/reviews/:reviewId", (request, response) => data(response, store.updateReviewItem(request.params.reviewId, parse(reviewSchema.partial(), request.body))));
   app.post("/api/reviews/:reviewId/character-resolution", (request, response) => {

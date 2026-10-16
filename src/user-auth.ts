@@ -1228,7 +1228,7 @@ const cliApiRules: Array<{ methods: string[]; path: RegExp }> = [
   { methods: ["GET"], path: /^\/api\/works\/[^/]+\/writing-progress$/u },
   { methods: ["PUT"], path: /^\/api\/works\/[^/]+\/writing-goal$/u },
   { methods: ["GET", "PATCH"], path: /^\/api\/works\/[^/]+\/chapter-title-format$/u },
-  { methods: ["POST"], path: /^\/api\/works\/[^/]+\/(?:volumes|chapters|foreshadows|drafts|settings|characters|races|organizations|timeline-tracks|timeline|relationships)$/u },
+  { methods: ["POST"], path: /^\/api\/works\/[^/]+\/(?:volumes|chapters|foreshadows|drafts|settings|characters|races|organizations|timeline-tracks|timeline|relationships|reviews)$/u },
   { methods: ["POST"], path: /^\/api\/works\/[^/]+\/chapters\/batch$/u },
   { methods: ["GET", "PATCH"], path: /^\/api\/volumes\/[^/]+$/u },
   { methods: ["POST"], path: /^\/api\/volumes\/[^/]+\/renumber-titles$/u },

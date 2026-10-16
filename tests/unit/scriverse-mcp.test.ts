@@ -668,6 +668,17 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "POST" && request.url === "/api/works/work-1/reviews") {
+        response.end(JSON.stringify({
+          data: {
+            id: "review-1",
+            workId: "work-1",
+            ...(body as object),
+            status: "pending"
+          }
+        }));
+        return;
+      }
       if (request.method === "POST" && request.url === "/api/works/work-1/drafts") {
         if (options.draftDuplicate && request.headers["x-scriverse-duplicate-policy"] !== "create") {
           response.statusCode = 409;
@@ -764,7 +775,8 @@ describe("Scriverse MCP Bridge", () => {
       "set_chapter_outline",
       "create_foreshadow",
       "add_foreshadow_occurrence",
-      "create_chapter_comment"
+      "create_chapter_comment",
+      "create_review_record"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2353,6 +2365,57 @@ describe("Scriverse MCP Bridge", () => {
         endLine: 4,
         note: "这里需要提示坐标与灰烬门的联系。"
       }
+    });
+  });
+
+  it("创建正式审核记录并保留实体引用", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const created = await client.callTool({
+      name: "create_review_record",
+      arguments: {
+        workId: "work-1",
+        itemType: "continuity",
+        dedupeKey: "chapter-26-clock-coordinate",
+        severity: "high",
+        title: "航海钟坐标前后不一致",
+        description: "第三章与第二十六章使用了不同坐标。",
+        entityRefs: [{ type: "chapter", id: "chapter-26" }],
+        evidence: [{ chapterId: "chapter-26", quote: "钟针重新转动。" }],
+        suggestion: "统一为第三章首次出现的坐标。",
+        idempotencyKey: "review-record-create-0001"
+      }
+    });
+
+    expect(created.structuredContent).toEqual({
+      review: expect.objectContaining({
+        id: "review-1",
+        workId: "work-1",
+        itemType: "continuity",
+        title: "航海钟坐标前后不一致",
+        status: "pending"
+      }),
+      creation: {
+        success: true,
+        workId: "work-1",
+        entityType: "review",
+        entityId: "review-1",
+        title: "航海钟坐标前后不一致",
+        versionNo: 1,
+        module: "reviews",
+        relatedEntityIds: {}
+      }
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/works/work-1/reviews",
+      authorization: "Bearer scrv_test-secret",
+      idempotencyKey: "review-record-create-0001",
+      body: expect.objectContaining({
+        itemType: "continuity",
+        dedupeKey: "chapter-26-clock-coordinate",
+        entityRefs: [{ type: "chapter", id: "chapter-26" }]
+      })
     });
   });
 

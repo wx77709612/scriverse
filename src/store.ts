@@ -9681,24 +9681,30 @@ export class Store {
     this.getWork(workId);
     const reviewId = id("review");
     const timestamp = now();
-    const result = this.db.run(
-      `INSERT OR IGNORE INTO review_items (id, work_id, item_type, dedupe_key, severity, title, description, entity_refs_json, evidence_json,
-       suggestion, status, resolution_note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      reviewId,
-      workId,
-      input.itemType,
-      input.dedupeKey ?? "",
-      input.severity ?? "medium",
-      input.title,
-      input.description ?? "",
-      JSON.stringify(input.entityRefs ?? []),
-      JSON.stringify(input.evidence ?? []),
-      input.suggestion ?? "",
-      input.status ?? "pending",
-      input.resolutionNote ?? "",
-      timestamp,
-      timestamp
-    );
+    const result = this.db.transaction(() => {
+      const inserted = this.db.run(
+        `INSERT OR IGNORE INTO review_items (id, work_id, item_type, dedupe_key, severity, title, description, entity_refs_json, evidence_json,
+         suggestion, status, resolution_note, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        reviewId,
+        workId,
+        input.itemType,
+        input.dedupeKey ?? "",
+        input.severity ?? "medium",
+        input.title,
+        input.description ?? "",
+        JSON.stringify(input.entityRefs ?? []),
+        JSON.stringify(input.evidence ?? []),
+        input.suggestion ?? "",
+        input.status ?? "pending",
+        input.resolutionNote ?? "",
+        timestamp,
+        timestamp
+      );
+      if (inserted.changes > 0) {
+        this.audit(workId, "review.created", "review", reviewId, { itemType: input.itemType, severity: input.severity ?? "medium" });
+      }
+      return inserted;
+    });
     if (result.changes === 0 && input.dedupeKey) {
       const existing = this.db.get(
         "SELECT * FROM review_items WHERE work_id = ? AND item_type = ? AND dedupe_key = ?",
@@ -9709,6 +9715,26 @@ export class Store {
       if (existing) return this.mapReviewItem(existing);
     }
     return this.getReviewItem(reviewId);
+  }
+
+  findReviewDuplicateCandidates(workId: string, input: Pick<ReviewInput, "itemType" | "dedupeKey" | "title">): Record<string, unknown>[] {
+    this.getWork(workId);
+    const dedupeKey = input.dedupeKey?.trim() ?? "";
+    return this.db.all(
+      `SELECT * FROM review_items
+       WHERE work_id = ? AND item_type = ?
+         AND ((? <> '' AND dedupe_key = ?) OR lower(trim(title)) = lower(trim(?)))
+       ORDER BY updated_at DESC, id
+       LIMIT 20`,
+      workId,
+      input.itemType,
+      dedupeKey,
+      dedupeKey,
+      input.title
+    ).map((row) => ({
+      ...this.mapReviewItem(row),
+      entityType: "review"
+    }));
   }
 
   listReviewItems(workId: string, status?: string): Record<string, unknown>[] {
@@ -9760,6 +9786,7 @@ export class Store {
       id: requiredString(row, "id"),
       workId: requiredString(row, "work_id"),
       itemType: requiredString(row, "item_type"),
+      dedupeKey: optionalString(row, "dedupe_key") ?? "",
       severity: requiredString(row, "severity"),
       title: requiredString(row, "title"),
       description: requiredString(row, "description"),
