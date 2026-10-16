@@ -2159,5 +2159,46 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_chapter_outline",
+    {
+      title: "安全更新 Scriverse 章节大纲",
+      description: "使用章节大纲自身的当前版本号更新目标、冲突、转折和备注；不会用章节版本替代，也不会覆盖并发修改。",
+      inputSchema: z.object({
+        chapterId: identifier.describe("章节 ID"),
+        goal: z.string().max(100_000).optional().describe("章节目标"),
+        conflict: z.string().max(100_000).optional().describe("章节冲突"),
+        turningPoint: z.string().max(100_000).optional().describe("章节转折"),
+        notes: z.string().max(100_000).optional().describe("大纲备注"),
+        status: z.enum(["draft", "ready", "completed"]).optional().describe("大纲状态"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("章节大纲当前版本号")
+      }).strict().refine((value) => [
+        value.goal,
+        value.conflict,
+        value.turningPoint,
+        value.notes,
+        value.status
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项章节大纲内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ chapterId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const chapterOutline = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/chapters/${encodeURIComponent(chapterId)}/outline`,
+          { method: "PUT", body }
+        );
+        return result("已安全更新 Scriverse 章节大纲：", chapterOutline, { chapterOutline });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

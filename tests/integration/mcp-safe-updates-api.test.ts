@@ -349,4 +349,40 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'relationship.updated'", relationshipId))
       .toEqual({ action: "relationship.updated", user_id: owner.user.userId });
   });
+
+  it("使用大纲自身 expectedVersionNo 更新章节大纲", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_outline_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_outline_outsider");
+    const volume = runWithRequestActor(owner.user, () => runtime.store.createVolume(owner.workId, { title: "第一卷" }));
+    const chapter = runWithRequestActor(owner.user, () => runtime.store.createChapter(owner.workId, {
+      volumeId: String(volume.id),
+      title: "第三章 归航"
+    }));
+    const chapterId = String(chapter.id);
+    runWithRequestActor(owner.user, () => runtime.store.upsertChapterOutline(chapterId, { goal: "确认故乡坐标" }));
+
+    const updated = await request(runtime.app).put(`/api/chapters/${chapterId}/outline`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ goal: "确认故乡坐标并安全返航", conflict: "舰队内部产生分歧", status: "ready", changeNote: "补充返航冲突", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ chapterId, goal: "确认故乡坐标并安全返航", status: "ready", versionNo: 2 });
+
+    const stale = await request(runtime.app).put(`/api/chapters/${chapterId}/outline`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ notes: "不得覆盖的新内容", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).put(`/api/chapters/${chapterId}/outline`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ notes: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getChapterOutline(chapterId)).toMatchObject({ goal: "确认故乡坐标并安全返航", versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'chapter-outline' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      chapterId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'outline.updated'", chapterId))
+      .toEqual({ action: "outline.updated", user_id: owner.user.userId });
+  });
 });

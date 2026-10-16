@@ -738,6 +738,24 @@ async function startScriverseFixture(options: {
         return;
       }
       if (request.method === "PUT" && request.url === "/api/chapters/chapter-26/outline") {
+        const input = body as Record<string, unknown>;
+        if (input.expectedVersionNo !== undefined) {
+          response.end(JSON.stringify({
+            data: {
+              chapterId: "chapter-26",
+              workId: "work-1",
+              volumeId: "volume-1",
+              chapterTitle: "第二十六章 归航",
+              goal: "确认故乡坐标并安全返航",
+              conflict: "舰队内部对坐标真实性产生分歧",
+              turningPoint: "旧信中的星图与航标重合",
+              notes: "保留坐标来源悬念",
+              status: "ready",
+              versionNo: 2
+            }
+          }));
+          return;
+        }
         response.end(JSON.stringify({
           data: {
             chapterId: "chapter-26",
@@ -938,7 +956,8 @@ describe("Scriverse MCP Bridge", () => {
       "update_race",
       "update_organization",
       "update_timeline_event",
-      "update_relationship"
+      "update_relationship",
+      "update_chapter_outline"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2974,6 +2993,49 @@ describe("Scriverse MCP Bridge", () => {
         confirmationStatus: "confirmed",
         changeNote: "确认导师关系",
         expectedVersionNo: 3
+      }
+    });
+  });
+
+  it("使用大纲自身版本号安全更新章节大纲", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_chapter_outline",
+      arguments: {
+        chapterId: "chapter-26",
+        goal: "确认故乡坐标并安全返航",
+        conflict: "舰队内部对坐标真实性产生分歧",
+        status: "ready",
+        changeNote: "补充返航冲突",
+        expectedVersionNo: 1
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      chapterOutline: {
+        chapterId: "chapter-26",
+        workId: "work-1",
+        volumeId: "volume-1",
+        chapterTitle: "第二十六章 归航",
+        goal: "确认故乡坐标并安全返航",
+        conflict: "舰队内部对坐标真实性产生分歧",
+        turningPoint: "旧信中的星图与航标重合",
+        notes: "保留坐标来源悬念",
+        status: "ready",
+        versionNo: 2
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PUT",
+      url: "/api/chapters/chapter-26/outline",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        goal: "确认故乡坐标并安全返航",
+        conflict: "舰队内部对坐标真实性产生分歧",
+        status: "ready",
+        changeNote: "补充返航冲突",
+        expectedVersionNo: 1
       }
     });
   });
