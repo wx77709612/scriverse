@@ -92,4 +92,38 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'draft.updated'", draftId))
       .toEqual({ action: "draft.updated", user_id: owner.user.userId });
   });
+
+  it("使用 expectedVersionNo 更新正式设定并保留版本与审计", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_setting_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_setting_outsider");
+    const setting = runWithRequestActor(owner.user, () => runtime.store.createSetting(owner.workId, {
+      title: "灰烬航标",
+      category: "科技",
+      content: "航标以恒星灰烬校准。"
+    }));
+    const settingId = String(setting.id);
+    const updated = await request(runtime.app).patch(`/api/settings/${settingId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ title: "灰烬航标协议", content: "灰烬航标需要两名领航员共同校准。", changeNote: "确认校准规则", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: settingId, title: "灰烬航标协议", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/settings/${settingId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ content: "不得覆盖的新内容", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/settings/${settingId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ content: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getSetting(settingId)).toMatchObject({ content: "灰烬航标需要两名领航员共同校准。", versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM entity_versions WHERE entity_type = 'setting' AND entity_id = ? ORDER BY version_no DESC LIMIT 1",
+      settingId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'setting.updated'", settingId))
+      .toEqual({ action: "setting.updated", user_id: owner.user.userId });
+  });
 });

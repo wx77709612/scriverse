@@ -1814,5 +1814,54 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_setting",
+    {
+      title: "安全更新 Scriverse 正式设定",
+      description: "使用当前版本号更新设定库中的正式设定；版本不一致时返回冲突，不会覆盖用户的新修改。",
+      inputSchema: z.object({
+        settingId: identifier.describe("设定 ID"),
+        title: z.string().trim().min(1).max(200).optional().describe("设定标题"),
+        category: z.string().trim().min(1).max(100).optional().describe("设定分类"),
+        content: z.string().trim().min(1).max(200_000).optional().describe("设定正文，支持 Markdown"),
+        tags: z.array(z.string().trim().min(1).max(100)).max(100).optional().describe("设定标签"),
+        status: z.enum(["draft", "pending", "confirmed", "deprecated"]).optional().describe("设定状态"),
+        locked: z.boolean().optional().describe("是否锁定为已确认事实"),
+        evidence: z.array(z.unknown()).max(100).optional().describe("结构化证据"),
+        scope: z.record(z.string(), z.unknown()).optional().describe("设定适用范围"),
+        authorNote: z.string().max(20_000).optional().describe("作者备注"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("读取到的当前版本号")
+      }).strict().refine((value) => [
+        value.title,
+        value.category,
+        value.content,
+        value.tags,
+        value.status,
+        value.locked,
+        value.evidence,
+        value.scope,
+        value.authorNote
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项正式设定内容"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ settingId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const setting = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/settings/${encodeURIComponent(settingId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 正式设定：", setting, { setting });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }

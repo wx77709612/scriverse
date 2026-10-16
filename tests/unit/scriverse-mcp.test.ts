@@ -209,6 +209,21 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/settings/setting-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "setting-1",
+            workId: "work-1",
+            title: "灰烬航标协议",
+            category: "科技",
+            content: "灰烬航标需要两名领航员共同校准。",
+            tags: ["航行"],
+            status: "confirmed",
+            versionNo: 5
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/characters?includeSections=false&includeMerged=0&includeContent=false&page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -808,7 +823,8 @@ describe("Scriverse MCP Bridge", () => {
       "create_chapter_comment",
       "create_review_record",
       "set_writing_goal",
-      "update_draft"
+      "update_draft",
+      "update_setting"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2527,6 +2543,49 @@ describe("Scriverse MCP Bridge", () => {
         content: "他们记录每一颗熄灭的恒星。",
         changeNote: "补充组织秘密",
         expectedVersionNo: 2
+      }
+    });
+  });
+
+  it("使用期望版本号安全更新正式设定", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_setting",
+      arguments: {
+        settingId: "setting-1",
+        title: "灰烬航标协议",
+        content: "灰烬航标需要两名领航员共同校准。",
+        tags: ["航行"],
+        status: "confirmed",
+        changeNote: "确认校准规则",
+        expectedVersionNo: 4
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      setting: {
+        id: "setting-1",
+        workId: "work-1",
+        title: "灰烬航标协议",
+        category: "科技",
+        content: "灰烬航标需要两名领航员共同校准。",
+        tags: ["航行"],
+        status: "confirmed",
+        versionNo: 5
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/settings/setting-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        title: "灰烬航标协议",
+        content: "灰烬航标需要两名领航员共同校准。",
+        tags: ["航行"],
+        status: "confirmed",
+        changeNote: "确认校准规则",
+        expectedVersionNo: 4
       }
     });
   });
