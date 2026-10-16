@@ -1,6 +1,7 @@
 import request from "supertest";
 import { afterAll, describe, expect, it } from "vitest";
 import { createRuntime } from "../../src/app.js";
+import { normalizeSourceResponses } from "./source-text.js";
 
 const runtime = createRuntime({
   databasePath: ":memory:",
@@ -19,6 +20,7 @@ describe("设定筛选界面", () => {
       request(runtime.app).get("/styles.css").expect(200),
       request(runtime.app).get("/setting-filters.js").expect(200)
     ]);
+    normalizeSourceResponses(page, application, styles, filters);
 
     expect(page.text).toContain('/styles.css?v=20260816-task-scope-volume-collapse-v2');
     expect(page.text).toContain('/app.js?v=20260816-extended-thinking-effort-v1');
@@ -44,6 +46,7 @@ describe("设定筛选界面", () => {
 
   it("切换作品时重置设定筛选与面板状态", async () => {
     const application = await request(runtime.app).get("/app.js").expect(200);
+    normalizeSourceResponses(application);
     const resetWorkScopedUiCachesSource = application.text.slice(
       application.text.indexOf("function resetWorkScopedUiCaches()"),
       application.text.indexOf("async function selectWork(workId, preferredChapterId = null)")

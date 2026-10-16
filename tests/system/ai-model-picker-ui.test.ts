@@ -1,15 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceTexts } from "./source-text.js";
 
 describe("AI 模型选择收纳界面", () => {
   it("将模型选择收纳为 Context 右侧的脑图标按钮，并保留可访问的弹出选择器", async () => {
     const publicPath = join(process.cwd(), "src", "public");
-    const [application, page, styles] = await Promise.all([
+    const [application, page, styles] = normalizeSourceTexts(await Promise.all([
       readFile(join(publicPath, "app.js"), "utf8"),
       readFile(join(publicPath, "index.html"), "utf8"),
       readFile(join(publicPath, "styles.css"), "utf8")
-    ]);
+    ]));
 
     expect(page).not.toContain('class="field-label prompt-model-field"');
     expect(page).toContain('id="ai-model-picker" class="ai-model-picker" type="button"');

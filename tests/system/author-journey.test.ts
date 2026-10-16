@@ -4,6 +4,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Runtime } from "../../src/app.js";
 import { createRuntime } from "../../src/app.js";
+import { normalizeSourceResponses } from "./source-text.js";
 
 describe("作者完整创作流程", () => {
   let runtime: Runtime;
@@ -168,6 +169,7 @@ describe("作者完整创作流程", () => {
 
   it("登录成功后丢弃原作品路由并只进入书架", async () => {
     const application = await request(runtime.app).get("/app.js").expect(200);
+    normalizeSourceResponses(application);
     expect(application.text).toContain('window.history.replaceState(null, "", serializePageRoute({ view: "shelf" }));\n    window.location.reload();');
   });
 
@@ -337,6 +339,7 @@ describe("作者完整创作流程", () => {
     const vditorScript = await request(runtime.app).get("/vendor/vditor/dist/index.min.js").expect(200);
     const icon = await request(runtime.app).get("/icon.svg").expect(200).expect("Content-Type", /svg/u);
     const manifest = await request(runtime.app).get("/site.webmanifest").expect(200);
+    normalizeSourceResponses(page, application, analysisTypes, modelConfig, connectivityTest, aiUsage, graph, styles, workPermissions, keyboardShortcuts, markdown, vditorCss, vditorScript, icon, manifest);
     expect(page.text).toContain('id="shelf-view"');
     expect(page.text).toMatch(/<link[^>]+href="\/styles\.css\?[^"]*feature=ai-prose-acceptance-removed-v1[^"]*"/u);
     expect(page.text).toMatch(/<script[^>]+src="\/app\.js\?[^"]*feature=ai-prose-acceptance-removed-v1[^"]*"/u);

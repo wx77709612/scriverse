@@ -1,6 +1,7 @@
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime, type Runtime } from "../../src/app.js";
+import { normalizeSourceResponses } from "./source-text.js";
 
 describe("知识模块布局切换", () => {
   const runtimes: Runtime[] = [];
@@ -22,6 +23,7 @@ describe("知识模块布局切换", () => {
     const styles = await request(runtime.app).get("/styles.css").expect(200);
     const application = await request(runtime.app).get("/app.js").expect(200);
     const layoutModule = await request(runtime.app).get("/module-layout.js").expect(200);
+    normalizeSourceResponses(page, styles, application, layoutModule);
 
     expect(page.text).toContain('/styles.css?v=20260816-task-scope-volume-collapse-v2');
     expect(page.text).toContain('/app.js?v=20260816-extended-thinking-effort-v1');

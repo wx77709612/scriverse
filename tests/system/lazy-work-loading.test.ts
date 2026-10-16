@@ -1,6 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { readFile as readSourceFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceText } from "./source-text.js";
+
+async function readFile(path: string, encoding: "utf8"): Promise<string> {
+  return normalizeSourceText(await readSourceFile(path, encoding));
+}
 
 describe("作品工作台按需加载", () => {
   it("打开作品时先加载折叠分卷，再异步加载章节目录", async () => {

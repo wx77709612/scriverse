@@ -1,6 +1,7 @@
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime, type Runtime } from "../../src/app.js";
+import { normalizeSourceResponses } from "./source-text.js";
 
 describe("编辑器工具栏布局", () => {
   const runtimes: Runtime[] = [];
@@ -21,6 +22,7 @@ describe("编辑器工具栏布局", () => {
     const page = await request(runtime.app).get("/").expect(200);
     const styles = await request(runtime.app).get("/styles.css").expect(200);
     const application = await request(runtime.app).get("/app.js").expect(200);
+    normalizeSourceResponses(page, styles, application);
 
     expect(page.text).toContain('<span id="chapter-path" class="eyebrow">未选择章节</span>\n            <input id="chapter-title"');
     expect(page.text).toContain('id="chapter-edit-button" class="primary-button hidden" type="button" aria-pressed="false" aria-label="切换到编辑模式">编辑</button>');

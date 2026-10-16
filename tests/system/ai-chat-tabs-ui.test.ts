@@ -1,6 +1,7 @@
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime, type Runtime } from "../../src/app.js";
+import { normalizeSourceResponses } from "./source-text.js";
 
 describe("Agent 多会话切换界面", () => {
   const runtimes: Runtime[] = [];
@@ -26,6 +27,7 @@ describe("Agent 多会话切换界面", () => {
       request(runtime.app).get("/styles.css").expect(200),
       request(runtime.app).get("/api/health").expect(200)
     ]);
+    normalizeSourceResponses(page, application, manager, tabs, styles);
 
     expect(page.text).toContain('id="ai-conversation-switcher" class="ai-conversation-switcher"');
     expect(page.text).toContain('id="ai-conversation-switcher-menu" class="ai-conversation-switcher-menu hidden"');

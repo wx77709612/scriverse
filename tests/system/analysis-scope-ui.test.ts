@@ -1,15 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceTexts } from "./source-text.js";
 
 describe("AI 分析范围交互", () => {
   it("选择全书时禁用章节选项，并在切回指定章节后恢复", async () => {
     const publicPath = join(process.cwd(), "src/public");
-    const [application, styles, page] = await Promise.all([
+    const [application, styles, page] = normalizeSourceTexts(await Promise.all([
       readFile(join(publicPath, "app.js"), "utf8"),
       readFile(join(publicPath, "styles.css"), "utf8"),
       readFile(join(publicPath, "index.html"), "utf8")
-    ]);
+    ]));
 
     expect(application).toContain('allSettingsOption.textContent = "全书 + 设定集"');
     expect(application).toContain('chapterSettingsOption.textContent = "指定章节 + 设定集"');

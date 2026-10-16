@@ -1,6 +1,7 @@
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRuntime, type Runtime } from "../../src/app.js";
+import { normalizeSourceResponses } from "./source-text.js";
 
 describe("实体存续状态界面", () => {
   let runtime: Runtime;
@@ -21,6 +22,7 @@ describe("实体存续状态界面", () => {
       request(runtime.app).get("/styles.css").expect(200),
       request(runtime.app).get("/").expect(200)
     ]);
+    normalizeSourceResponses(application, styles, page);
 
     expect(application.text).toContain('field("isDead", "标记为已死亡", "checkbox"');
     expect(application.text).toContain('characterEditorSection("state", "状态与约束", "维护任意当前状态，并明确禁止 AI 自行覆盖的字段。",\n      field("isDead", "标记为已死亡", "checkbox"');

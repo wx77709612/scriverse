@@ -1,15 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceTexts } from "./source-text.js";
 
 describe("AI 流连接耗时显示", () => {
   it("在连接状态后显示整数秒并固定三位数字宽度", async () => {
     const publicPath = join(process.cwd(), "src", "public");
-    const [page, application, styles] = await Promise.all([
+    const [page, application, styles] = normalizeSourceTexts(await Promise.all([
       readFile(join(publicPath, "index.html"), "utf8"),
       readFile(join(publicPath, "app.js"), "utf8"),
       readFile(join(publicPath, "styles.css"), "utf8")
-    ]);
+    ]));
 
     expect(page).toContain("&feature=ai-stream-connection-seconds-v1");
     expect(application).toContain('meta.replaceChildren("正在请求…… ", connectionSeconds, " 秒")');

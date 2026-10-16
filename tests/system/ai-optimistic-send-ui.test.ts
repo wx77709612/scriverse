@@ -1,13 +1,14 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceText, normalizeSourceTexts } from "./source-text.js";
 
 describe("AI 消息即时发送界面", () => {
   it("先渲染用户消息并清空输入框，再开始异步请求", async () => {
-    const [application, page] = await Promise.all([
+    const [application, page] = normalizeSourceTexts(await Promise.all([
       readFile(join(process.cwd(), "src", "public", "app.js"), "utf8"),
       readFile(join(process.cwd(), "src", "public", "index.html"), "utf8")
-    ]);
+    ]));
     const sendSource = application.slice(
       application.indexOf("async function sendAiWithOptions"),
       application.indexOf("function createAiStreamCharacterCount")
@@ -26,7 +27,7 @@ describe("AI 消息即时发送界面", () => {
   });
 
   it("用服务端确认消息替换临时气泡并在失败时显示错误卡片", async () => {
-    const application = await readFile(join(process.cwd(), "src", "public", "app.js"), "utf8");
+    const application = normalizeSourceText(await readFile(join(process.cwd(), "src", "public", "app.js"), "utf8"));
 
     expect(application).toContain("requestHolder.optimisticUserMessage.replaceWith(confirmedUserMessage)");
     expect(application).toContain("requestHolder.optimisticUserMessage = confirmedUserMessage");

@@ -1,7 +1,12 @@
-import { readFile } from "node:fs/promises";
+import { readFile as readSourceFile } from "node:fs/promises";
 import { join } from "node:path";
 import vm from "node:vm";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceText } from "./source-text.js";
+
+async function readFile(path: string, encoding: "utf8"): Promise<string> {
+  return normalizeSourceText(await readSourceFile(path, encoding));
+}
 
 function sourceBetween(source: string, start: string, end: string): string {
   const startIndex = source.indexOf(start);

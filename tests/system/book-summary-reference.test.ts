@@ -1,6 +1,7 @@
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
 import { createRuntime, type Runtime } from "../../src/app.js";
+import { normalizeSourceResponses } from "./source-text.js";
 
 describe("全书概要上下文引用", () => {
   const runtimes: Runtime[] = [];
@@ -21,6 +22,7 @@ describe("全书概要上下文引用", () => {
     const page = await request(runtime.app).get("/").expect(200);
     const application = await request(runtime.app).get("/app.js").expect(200);
     const styles = await request(runtime.app).get("/styles.css").expect(200);
+    normalizeSourceResponses(page, application, styles);
 
     expect(page.text).toContain('<select id="ai-scope" aria-label="上下文范围">\n              <option value="none">无上下文</option>');
     expect(page.text).toContain('<option value="chapter-summary">当前章节 + 全书概要</option>');

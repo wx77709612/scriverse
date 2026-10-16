@@ -1,15 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceTexts } from "./source-text.js";
 
 describe("书籍导入进度提示", () => {
   it("为两条书籍导入路径显示不可关闭的常驻上传与处理进度", async () => {
     const root = process.cwd();
-    const [page, application, styles] = await Promise.all([
+    const [page, application, styles] = normalizeSourceTexts(await Promise.all([
       readFile(join(root, "src/public/index.html"), "utf8"),
       readFile(join(root, "src/public/app.js"), "utf8"),
       readFile(join(root, "src/public/styles.css"), "utf8")
-    ]);
+    ]));
     const progressToastStart = application.indexOf("function createImportProgressToast(fileName)");
     const progressToastEnd = application.indexOf("function restoreToastFocus", progressToastStart);
     const progressToastSource = application.slice(progressToastStart, progressToastEnd);

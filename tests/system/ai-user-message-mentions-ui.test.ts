@@ -1,14 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceTexts } from "./source-text.js";
 
 describe("AI 用户消息引用横幅", () => {
   it("透传流式消息 metadata 并渲染所有 @ 引用标签", async () => {
-    const [page, application, styles] = await Promise.all([
+    const [page, application, styles] = normalizeSourceTexts(await Promise.all([
       readFile(join(process.cwd(), "src", "public", "index.html"), "utf8"),
       readFile(join(process.cwd(), "src", "public", "app.js"), "utf8"),
       readFile(join(process.cwd(), "src", "public", "styles.css"), "utf8")
-    ]);
+    ]));
 
     expect(page).toContain('/styles.css?v=20260816-task-scope-volume-collapse-v2');
     expect(page).toContain('/app.js?v=20260816-extended-thinking-effort-v1');

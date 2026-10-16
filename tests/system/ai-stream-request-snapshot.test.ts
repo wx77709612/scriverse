@@ -1,14 +1,15 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { normalizeSourceText, normalizeSourceTexts } from "./source-text.js";
 
 describe("AI 流式请求快照", () => {
   it("从请求快照构造流地址、取消信号和持久化目标", async () => {
     const publicPath = join(process.cwd(), "src", "public");
-    const [application, page] = await Promise.all([
+    const [application, page] = normalizeSourceTexts(await Promise.all([
       readFile(join(publicPath, "app.js"), "utf8"),
       readFile(join(publicPath, "index.html"), "utf8")
-    ]);
+    ]));
 
     expect(application).toContain('/ai-request-manager.js?v=20260905-question-stream-v2');
     expect(application).toContain('fetch(endpoint ?? `/api/works/${encodeURIComponent(request.workId)}/chat/stream`');
@@ -19,7 +20,7 @@ describe("AI 流式请求快照", () => {
   });
 
   it("页签切换保留旧流，作品切换会取消全部流并拒绝过期回调", async () => {
-    const application = await readFile(join(process.cwd(), "src", "public", "app.js"), "utf8");
+    const application = normalizeSourceText(await readFile(join(process.cwd(), "src", "public", "app.js"), "utf8"));
 
     expect(application).toContain('beginAiConversationNavigation("已切换 AI 对话", "切换会话")');
     expect(application).toContain('beginAiConversationNavigation("已新建 AI 对话", "新建会话")');
