@@ -308,6 +308,22 @@ async function startScriverseFixture(options: {
         }));
         return;
       }
+      if (request.method === "PATCH" && request.url === "/api/character-sections/section-1") {
+        response.end(JSON.stringify({
+          data: {
+            id: "section-1",
+            workId: "work-1",
+            characterId: "character-1",
+            sectionType: "background",
+            title: "远征前史",
+            contentMarkdown: "沈砚曾参与第一次灰烬航标试验。",
+            summary: "首次试验幸存者。",
+            sortOrder: 1,
+            versionNo: 4
+          }
+        }));
+        return;
+      }
       if (request.method === "GET" && request.url === "/api/works/work-1/races?includeContent=false&page=1&limit=20") {
         response.end(JSON.stringify({
           data: {
@@ -841,7 +857,8 @@ describe("Scriverse MCP Bridge", () => {
       "set_writing_goal",
       "update_draft",
       "update_setting",
-      "update_character"
+      "update_character",
+      "update_character_section"
     ]);
     const directoryTool = result.tools.find((tool) => tool.name === "get_work_directory");
     expect(directoryTool?.annotations).toMatchObject({
@@ -2645,6 +2662,48 @@ describe("Scriverse MCP Bridge", () => {
         organizationIds: ["organization-1"],
         changeNote: "补充角色代号",
         expectedVersionNo: 5
+      }
+    });
+  });
+
+  it("使用扩展资料自身版本号安全更新角色资料", async () => {
+    const fixture = await startScriverseFixture();
+    const client = await connectMcp(fixture.baseUrl);
+    const updated = await client.callTool({
+      name: "update_character_section",
+      arguments: {
+        sectionId: "section-1",
+        title: "远征前史",
+        contentMarkdown: "沈砚曾参与第一次灰烬航标试验。",
+        summary: "首次试验幸存者。",
+        changeNote: "补充试验经历",
+        expectedVersionNo: 3
+      }
+    });
+
+    expect(updated.structuredContent).toEqual({
+      characterSection: {
+        id: "section-1",
+        workId: "work-1",
+        characterId: "character-1",
+        sectionType: "background",
+        title: "远征前史",
+        contentMarkdown: "沈砚曾参与第一次灰烬航标试验。",
+        summary: "首次试验幸存者。",
+        sortOrder: 1,
+        versionNo: 4
+      }
+    });
+    expect(fixture.requests[0]).toEqual({
+      method: "PATCH",
+      url: "/api/character-sections/section-1",
+      authorization: "Bearer scrv_test-secret",
+      body: {
+        title: "远征前史",
+        contentMarkdown: "沈砚曾参与第一次灰烬航标试验。",
+        summary: "首次试验幸存者。",
+        changeNote: "补充试验经历",
+        expectedVersionNo: 3
       }
     });
   });

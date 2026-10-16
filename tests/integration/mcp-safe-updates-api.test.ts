@@ -160,4 +160,39 @@ describe("MCP 安全更新契约", () => {
     expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'character.updated'", characterId))
       .toEqual({ action: "character.updated", user_id: owner.user.userId });
   });
+
+  it("使用扩展资料自身 expectedVersionNo 更新角色资料", async () => {
+    const runtime = createTestRuntime();
+    runtimes.push(runtime);
+    const owner = await registerFixture(runtime, "mcp_update_character_section_owner");
+    const outsider = await registerFixture(runtime, "mcp_update_character_section_outsider");
+    const character = runWithRequestActor(owner.user, () => runtime.store.createCharacter(owner.workId, { name: "沈砚" }));
+    const section = runWithRequestActor(owner.user, () => runtime.store.createCharacterProfileSection(String(character.id), {
+      sectionType: "background",
+      title: "远征经历",
+      contentMarkdown: "沈砚参与过远征。"
+    }));
+    const sectionId = String(section.id);
+    const updated = await request(runtime.app).patch(`/api/character-sections/${sectionId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ title: "远征前史", contentMarkdown: "沈砚曾参与第一次灰烬航标试验。", changeNote: "补充试验经历", expectedVersionNo: 1 })
+      .expect(200);
+    expect(updated.body.data).toMatchObject({ id: sectionId, title: "远征前史", versionNo: 2 });
+
+    const stale = await request(runtime.app).patch(`/api/character-sections/${sectionId}`)
+      .set("Authorization", `Bearer ${owner.apiKey}`)
+      .send({ title: "不得覆盖", expectedVersionNo: 1 }).expect(409);
+    expect(stale.body.error).toMatchObject({ code: "VERSION_CONFLICT", details: { expectedVersionNo: 1, currentVersionNo: 2 } });
+    await request(runtime.app).patch(`/api/character-sections/${sectionId}`)
+      .set("Authorization", `Bearer ${outsider.apiKey}`)
+      .send({ title: "越权修改", expectedVersionNo: 2 }).expect(403);
+
+    expect(runtime.store.getCharacterProfileSection(sectionId)).toMatchObject({ title: "远征前史", versionNo: 2 });
+    expect(runtime.database.get(
+      "SELECT version_no, created_by_user_id FROM character_profile_section_versions WHERE section_id = ? ORDER BY version_no DESC LIMIT 1",
+      sectionId
+    )).toEqual({ version_no: 2, created_by_user_id: owner.user.userId });
+    expect(runtime.database.get("SELECT action, user_id FROM audit_logs WHERE entity_id = ? AND action = 'character-section.updated'", sectionId))
+      .toEqual({ action: "character-section.updated", user_id: owner.user.userId });
+  });
 });

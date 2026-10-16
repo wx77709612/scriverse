@@ -1918,5 +1918,50 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
     }
   );
 
+  server.registerTool(
+    "update_character_section",
+    {
+      title: "安全更新 Scriverse 角色扩展资料",
+      description: "使用角色扩展资料自身的当前版本号更新 Markdown 章节；不会用角色主档版本替代，也不会覆盖并发修改。",
+      inputSchema: z.object({
+        sectionId: identifier.describe("角色扩展资料 ID"),
+        sectionType: z.enum(["overview", "appearance", "abilities", "personality", "ecology", "background", "history", "legends", "research", "notes", "custom"]).optional().describe("资料类型"),
+        title: z.string().trim().min(1).max(200).optional().describe("资料标题"),
+        contentMarkdown: z.string().max(500_000).optional().describe("Markdown 正文"),
+        summary: z.string().max(20_000).optional().describe("资料摘要"),
+        sortOrder: z.number().int().min(0).max(100_000).optional().describe("排序值"),
+        sourcePath: z.string().max(2_000).nullable().optional().describe("来源路径"),
+        sourceHash: z.string().regex(/^[a-f0-9]{64}$/u).nullable().optional().describe("来源哈希"),
+        changeNote: z.string().trim().max(500).optional().describe("本次修改说明"),
+        expectedVersionNo: z.number().int().positive().describe("扩展资料当前版本号")
+      }).strict().refine((value) => [
+        value.sectionType,
+        value.title,
+        value.contentMarkdown,
+        value.summary,
+        value.sortOrder,
+        value.sourcePath,
+        value.sourceHash
+      ].some((field) => field !== undefined), {
+        message: "至少需要修改一项角色扩展资料"
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+    },
+    async ({ sectionId, ...input }) => {
+      try {
+        const body = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+        const characterSection = await requestScriverse(
+          fetchImpl,
+          config,
+          `/api/character-sections/${encodeURIComponent(sectionId)}`,
+          { method: "PATCH", body }
+        );
+        return result("已安全更新 Scriverse 角色扩展资料：", characterSection, { characterSection });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
   return server;
 }
