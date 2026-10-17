@@ -40,6 +40,7 @@
     "prepack": "npm run build",
     "start": "node --env-file-if-exists=.env.local dist/server.js",
     "start:mcp": "node dist/scriverse-mcp-server.js",
+    "chatgpt:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-chatgpt-mcp.ps1",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
