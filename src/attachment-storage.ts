@@ -15,6 +15,9 @@ const maximumAnimationFrames = 100;
 const maximumAnimationPixels = 50_000_000;
 const maximumGifFrames = 10_000;
 const allowedFormats = new Set(["png", "jpeg", "webp", "gif"]);
+const temporaryFileRemovalRetryLimit = 5;
+const temporaryFileRemovalRetryDelayMs = 50;
+const transientFileRemovalErrors = new Set(["EBUSY", "EPERM"]);
 
 type AttachmentIngestOptions = {
   allowedFormats?: ReadonlySet<string>;
@@ -50,6 +53,19 @@ function mimeType(format: string): StoredImageMimeType {
 function extensionForMime(value: StoredImageMimeType): string {
   if (value === "image/jpeg") return "jpg";
   return value.slice("image/".length);
+}
+
+async function removeTemporaryFile(path: string): Promise<void> {
+  for (let retryNumber = 0; ; retryNumber += 1) {
+    try {
+      await rm(path, { force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!code || !transientFileRemovalErrors.has(code) || retryNumber >= temporaryFileRemovalRetryLimit) throw error;
+      await new Promise((resolve) => setTimeout(resolve, temporaryFileRemovalRetryDelayMs * (retryNumber + 1)));
+    }
+  }
 }
 
 async function sha256File(path: string): Promise<string> {
@@ -181,7 +197,7 @@ export class AttachmentStorage {
           storedMimeType = "image/webp";
         }
       } catch {
-        await rm(candidatePath, { force: true });
+        await removeTemporaryFile(candidatePath);
       }
     }
 
@@ -210,7 +226,7 @@ export class AttachmentStorage {
         animated: pageCount > 1
       };
     } finally {
-      await rm(candidatePath, { force: true });
+      await removeTemporaryFile(candidatePath);
     }
   }
 }
