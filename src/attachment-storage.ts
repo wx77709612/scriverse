@@ -187,10 +187,12 @@ export class AttachmentStorage {
         await sharp(sourcePath, { animated: true, limitInputPixels: maximumPixels, sequentialRead: true })
           .webp({ lossless: true, effort: 6 })
           .toFile(candidatePath);
-        const converted = await sharp(candidatePath, { animated: true, limitInputPixels: maximumPixels }).metadata();
-        const convertedPages = Math.max(1, Number(converted.pages ?? 1));
-        if (pageCount > 1 && convertedPages !== pageCount) {
-          throw new AppError(422, "ATTACHMENT_ANIMATION_LOST", "附件转换未能保留全部动画帧");
+        if (pageCount > 1) {
+          const converted = await sharp(candidatePath, { animated: true, limitInputPixels: maximumPixels }).metadata();
+          const convertedPages = Math.max(1, Number(converted.pages ?? 1));
+          if (convertedPages !== pageCount) {
+            throw new AppError(422, "ATTACHMENT_ANIMATION_LOST", "附件转换未能保留全部动画帧");
+          }
         }
         if ((await stat(candidatePath)).size < originalStats.size) {
           selectedPath = candidatePath;
