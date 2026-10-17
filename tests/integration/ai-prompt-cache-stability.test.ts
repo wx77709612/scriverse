@@ -51,8 +51,11 @@ describe("AI 多轮 prompt cache 稳定性", () => {
   let modelId: string;
   let fetchMock: ReturnType<typeof vi.fn<typeof fetch>>;
   let capturedTurns: CompletionMessage[][];
+  let originalTimeZone: string | undefined;
 
   beforeEach(async () => {
+    originalTimeZone = process.env.TZ;
+    process.env.TZ = "Asia/Shanghai";
     capturedTurns = [];
     fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       if (String(input).endsWith("/models")) {
@@ -115,6 +118,11 @@ describe("AI 多轮 prompt cache 稳定性", () => {
   afterEach(async () => {
     vi.useRealTimers();
     await runtime.close();
+    if (originalTimeZone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = originalTimeZone;
+    }
   });
 
   async function streamTurn(instruction: string, scope: Record<string, unknown>, conversationId?: string): Promise<string> {
