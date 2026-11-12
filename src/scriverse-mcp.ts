@@ -529,6 +529,46 @@ export function createScriverseMcpServer(dependencies: ScriverseMcpDependencies)
   );
 
   server.registerTool(
+    "list_chapter_comments",
+    {
+      title: "列出章节评论",
+      description: "按章节 ID 读取评论内容、所引用的正文、起止行、状态及评论版本。",
+      inputSchema: z.object({ chapterId: identifier.describe("章节 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ chapterId }) => {
+      try {
+        const annotations = await requestScriverse(fetchImpl, config, `/api/chapters/${encodeURIComponent(chapterId)}/annotations`);
+        if (!Array.isArray(annotations)) throw new Error("Scriverse 章节批注列表格式无效");
+        const comments = annotations.filter((item) => item && typeof item === "object" && item.kind === "note");
+        return result("章节评论：", comments, { comments });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_chapter_todos",
+    {
+      title: "列出章节待办",
+      description: "按章节 ID 读取待办内容、正文引用、起止行、完成状态及待办版本。status 为 resolved 表示已完成。",
+      inputSchema: z.object({ chapterId: identifier.describe("章节 ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    },
+    async ({ chapterId }) => {
+      try {
+        const annotations = await requestScriverse(fetchImpl, config, `/api/chapters/${encodeURIComponent(chapterId)}/annotations`);
+        if (!Array.isArray(annotations)) throw new Error("Scriverse 章节批注列表格式无效");
+        const todos = annotations.filter((item) => item && typeof item === "object" && item.kind === "todo");
+        return result("章节待办：", todos, { todos });
+      } catch (error) {
+        return errorResult(error, config.apiKey);
+      }
+    }
+  );
+
+  server.registerTool(
     "list_drafts",
     {
       title: "列出 Scriverse 想法",

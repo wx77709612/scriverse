@@ -992,6 +992,75 @@ afterEach(async () => {
 });
 
 describe("Scriverse MCP Bridge", () => {
+  it("读取章节待办的完成状态和相关版本，并保留无权限时的空结果", async () => {
+    const requests: string[] = [];
+    const client = await connectMcp("http://127.0.0.1:13210", { fetchImpl: async (input, init) => {
+      requests.push(`${String(input)} ${new Headers(init?.headers).get("Authorization")}`);
+      return new Response(JSON.stringify({ data: [
+        { id: "comment-1", kind: "note", note: "评论", startLine: 1, endLine: 1, quote: "开头", status: "open", versionNo: 1 },
+        { id: "todo-open", chapterId: "chapter-26", kind: "todo", startLine: 4, endLine: 5,
+          quote: "正文片段", note: "补充转场", status: "open", versionNo: 1 },
+        { id: "todo-done", chapterId: "chapter-26", kind: "todo", startLine: 7, endLine: 7,
+          quote: "结尾", note: "核对人物称呼", status: "resolved", versionNo: 3,
+          createdAt: "2026-11-10T10:00:00Z", updatedAt: "2026-11-11T10:00:00Z" }
+      ] }), { headers: { "Content-Type": "application/json" } });
+    } });
+    const todos = await client.callTool({ name: "list_chapter_todos", arguments: { chapterId: "chapter-26" } });
+    expect((await client.listTools()).tools.find((tool) => tool.name === "list_chapter_todos")?.annotations).toMatchObject({
+      readOnlyHint: true, destructiveHint: false, idempotentHint: true
+    });
+    expect(todos.isError).not.toBe(true);
+    expect(todos.structuredContent).toEqual({ todos: [
+      { id: "todo-open", chapterId: "chapter-26", kind: "todo", startLine: 4, endLine: 5,
+        quote: "正文片段", note: "补充转场", status: "open", versionNo: 1 },
+      { id: "todo-done", chapterId: "chapter-26", kind: "todo", startLine: 7, endLine: 7,
+        quote: "结尾", note: "核对人物称呼", status: "resolved", versionNo: 3,
+        createdAt: "2026-11-10T10:00:00Z", updatedAt: "2026-11-11T10:00:00Z" }
+    ] });
+    expect(requests).toEqual(["http://127.0.0.1:13210/api/chapters/chapter-26/annotations Bearer scrv_test-secret"]);
+
+    const restrictedClient = await connectMcp("http://127.0.0.1:13210", { fetchImpl: async () => new Response(
+      JSON.stringify({ data: [] }), { headers: { "Content-Type": "application/json" } }
+    ) });
+    const restricted = await restrictedClient.callTool({ name: "list_chapter_todos", arguments: { chapterId: "chapter-26" } });
+    expect(restricted.structuredContent).toEqual({ todos: [] });
+  });
+
+  it("读取章节评论并保留正文引用、行号、状态和授权错误", async () => {
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    const client = await connectMcp("http://127.0.0.1:13210", { fetchImpl: async (input, init) => {
+      requests.push({ url: String(input), authorization: new Headers(init?.headers).get("Authorization") });
+      return new Response(JSON.stringify({ data: [
+        { id: "comment-1", chapterId: "chapter-26", kind: "note", startLine: 2, endLine: 3,
+          quote: "原文两行", note: "这里改一下语气", status: "open", versionNo: 2,
+          createdAt: "2026-11-10T10:00:00Z", updatedAt: "2026-11-11T10:00:00Z" },
+        { id: "todo-1", chapterId: "chapter-26", kind: "todo", startLine: 5, endLine: 5,
+          quote: "另一段原文", note: "补充细节", status: "resolved", versionNo: 3 }
+      ] }), { headers: { "Content-Type": "application/json" } });
+    } });
+    const comments = await client.callTool({ name: "list_chapter_comments", arguments: { chapterId: "chapter-26" } });
+    expect((await client.listTools()).tools.find((tool) => tool.name === "list_chapter_comments")?.annotations).toMatchObject({
+      readOnlyHint: true, destructiveHint: false, idempotentHint: true
+    });
+    expect(comments.isError).not.toBe(true);
+    expect(comments.structuredContent).toEqual({ comments: [{
+      id: "comment-1", chapterId: "chapter-26", kind: "note", startLine: 2, endLine: 3,
+      quote: "原文两行", note: "这里改一下语气", status: "open", versionNo: 2,
+      createdAt: "2026-11-10T10:00:00Z", updatedAt: "2026-11-11T10:00:00Z"
+    }] });
+    expect(requests).toEqual([{
+      url: "http://127.0.0.1:13210/api/chapters/chapter-26/annotations", authorization: "Bearer scrv_test-secret"
+    }]);
+
+    const deniedClient = await connectMcp("http://127.0.0.1:13210", { fetchImpl: async () => new Response(
+      JSON.stringify({ error: { code: "FORBIDDEN", message: "无权读取章节批注" } }),
+      { status: 403, headers: { "Content-Type": "application/json" } }
+    ) });
+    const denied = await deniedClient.callTool({ name: "list_chapter_comments", arguments: { chapterId: "chapter-26" } });
+    expect(denied.isError).toBe(true);
+    expect(denied.structuredContent).toEqual({ error: { code: "FORBIDDEN", message: "无权读取章节批注" } });
+  });
+
   it("公开分页作品目录工具并声明严格的输入边界", async () => {
     const fixture = await startScriverseFixture();
     const client = await connectMcp(fixture.baseUrl);
@@ -1004,6 +1073,8 @@ describe("Scriverse MCP Bridge", () => {
       "get_work",
       "list_chapters",
       "get_chapter",
+      "list_chapter_comments",
+      "list_chapter_todos",
       "list_drafts",
       "get_draft",
       "list_settings",
